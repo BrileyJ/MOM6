@@ -913,9 +913,9 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
 
   !   Use u_Cor and v_Cor as the reference values for the Coriolis terms,
   ! including the viscous remnant.
-  !$OMP parallel do default(shared)
-  !BJ added the OpenAcc loop directive 
-  !$acc parallel loop 
+  !OMP parallel do default(shared)
+  !Group Optimiation 
+  !$acc parallel loop collapse(2) 
   do j=js-1,je+1 ; do I=is-1,ie ; ubt_Cor(I,j) = 0.0 ; enddo ; enddo
   !$OMP parallel do default(shared)
   do J=js-1,je ; do i=is-1,ie+1 ; vbt_Cor(i,J) = 0.0 ; enddo ; enddo
@@ -933,14 +933,18 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   ! locations of the faces to the pressure point.  They will have their halos
   ! updated later on.
   !$OMP parallel do default(shared)
+  !Open ACC added Bjames 
+  !$acc parallel loop collapse(3) 
   do j=js,je
     do k=1,nz ; do I=is-1,ie
       gtot_E(i,j)   = gtot_E(i,j)   + pbce(i,j,k)   * wt_u(I,j,k)
       gtot_W(i+1,j) = gtot_W(i+1,j) + pbce(i+1,j,k) * wt_u(I,j,k)
     enddo ; enddo
-  enddo
+  enddo 
+
   !$OMP parallel do default(shared)
-  do J=js-1,je
+  !$acc parallel loop  
+   do J=js-1,je
      do k=1,nz ; do i=is,ie
       gtot_N(i,j)   = gtot_N(i,j)   + pbce(i,j,k)   * wt_v(i,J,k)
       gtot_S(i,j+1) = gtot_S(i,j+1) + pbce(i,j+1,k) * wt_v(i,J,k)
@@ -1076,15 +1080,21 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       do J=js-1,je ; do i=is,ie
         vhbt0(i,J) = vhbt(i,J) - find_vhbt(vbt(i,J), BTCL_v(i,J), US)
       enddo ; enddo
+
     else
       !$OMP parallel do default(shared)
+      !Open acc Bjames 
+      !$acc parallel loop 
       do j=js,je ; do I=is-1,ie
         uhbt0(I,j) = uhbt(I,j) - Datu(I,j)*ubt(I,j)
-      enddo ; enddo
+      enddo ; enddo 
+
       !$OMP parallel do default(shared)
+      !$acc parallel loop 
       do J=js-1,je ; do i=is,ie
         vhbt0(i,J) = vhbt(i,J) - Datv(i,J)*vbt(i,J)
       enddo ; enddo
+
     endif
     if (CS%BT_OBC%apply_u_OBCs) then  ! zero out pressure force across boundary
       !$OMP parallel do default(shared)
