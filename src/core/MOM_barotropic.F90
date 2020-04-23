@@ -642,6 +642,11 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   integer :: is, ie, js, je, nz, Isq, Ieq, Jsq, Jeq
   integer :: isd, ied, jsd, jed, IsdB, IedB, JsdB, JedB
   integer :: ioff, joff
+  
+  !Temporary Arrays for GPU porting 
+  !Naming: use _gpu for these temps ex: "CS_q_gpu"
+  
+
 
   if (.not.associated(CS)) call MOM_error(FATAL, &
       "btstep: Module MOM_barotropic must be initialized before it is used.")
@@ -913,10 +918,12 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
 
   !   Use u_Cor and v_Cor as the reference values for the Coriolis terms,
   ! including the viscous remnant.
-  !$OMP parallel do default(shared)
-  !GDD added OpenACC loop directive
-  !$acc parallel loop
+  !OMP parallel do default(shared)
+  !Group Optimiation 
+  !$acc parallel loop collapse(2) 
   do j=js-1,je+1 ; do I=is-1,ie ; ubt_Cor(I,j) = 0.0 ; enddo ; enddo
+  !$acc end parallel
+
   !$OMP parallel do default(shared)
   do J=js-1,je ; do i=is-1,ie+1 ; vbt_Cor(i,J) = 0.0 ; enddo ; enddo
   !$OMP parallel do default(shared)
@@ -927,25 +934,34 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   do J=js-1,je ; do k=1,nz ; do i=is,ie
     vbt_Cor(i,J) = vbt_Cor(i,J) + wt_v(i,J,k) * V_Cor(i,J,k)
   enddo ; enddo ; enddo
-
+  
   ! The gtot arrays are the effective layer-weighted reduced gravities for
   ! accelerations across the various faces, with names for the relative
   ! locations of the faces to the pressure point.  They will have their halos
   ! updated later on.
   !$OMP parallel do default(shared)
+  !Open ACC added Bjames 
+  print *,"BMJ Loop 945 and 955: j =",je-js,"k=",nz,"i=", ie-is-1
+  !FIX: 1st  Loop throws overflow error durring run
+  !$acc parallel loop 
   do j=js,je
     do k=1,nz ; do I=is-1,ie
       gtot_E(i,j)   = gtot_E(i,j)   + pbce(i,j,k)   * wt_u(I,j,k)
       gtot_W(i+1,j) = gtot_W(i+1,j) + pbce(i+1,j,k) * wt_u(I,j,k)
     enddo ; enddo
   enddo
+  !$acc end parallel 
+
   !$OMP parallel do default(shared)
+  !$acc parallel loop  
   do J=js-1,je
-     do k=1,nz ; do i=is,ie
+    do k=1,nz ; do i=is,ie
       gtot_N(i,j)   = gtot_N(i,j)   + pbce(i,j,k)   * wt_v(i,J,k)
       gtot_S(i,j+1) = gtot_S(i,j+1) + pbce(i,j+1,k) * wt_v(i,J,k)
     enddo ; enddo
   enddo
+  !$acc end parallel
+
 
   if (CS%tides) then
     call tidal_forcing_sensitivity(G, CS%tides_CSp, det_de)
@@ -1076,15 +1092,25 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       do J=js-1,je ; do i=is,ie
         vhbt0(i,J) = vhbt(i,J) - find_vhbt(vbt(i,J), BTCL_v(i,J), US)
       enddo ; enddo
+
     else
       !$OMP parallel do default(shared)
+      !Open acc Bjames, either this or next math error 
+      print *,"BMJ Loop 1100  and 1106: j =",je-js,"i=", ie-is-1      
+      !$acc parallel loop
       do j=js,je ; do I=is-1,ie
         uhbt0(I,j) = uhbt(I,j) - Datu(I,j)*ubt(I,j)
-      enddo ; enddo
+      enddo ; enddo 
+      !$acc end parallel
+
       !$OMP parallel do default(shared)
+      !$acc parallel loop 
       do J=js-1,je ; do i=is,ie
         vhbt0(i,J) = vhbt(i,J) - Datv(i,J)*vbt(i,J)
       enddo ; enddo
+      !$acc end parallel
+
+
     endif
     if (CS%BT_OBC%apply_u_OBCs) then  ! zero out pressure force across boundary
       !$OMP parallel do default(shared)
