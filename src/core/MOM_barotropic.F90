@@ -645,7 +645,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   
   !Temporary Arrays for GPU porting 
   !Naming: use _gpu for these temps ex: "CS_q_gpu"
-  
+  real, dimension (NIMEMB_PTR_,NJMEM_,NKMEM_):: CS_frhatu_gpu
 
 
   if (.not.associated(CS)) call MOM_error(FATAL, &
@@ -893,7 +893,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       eta_PF(i,j) = eta_PF_in(i,j)
     enddo ; enddo
   endif
-
+     
   !$OMP parallel do default(shared) private(visc_rem)
   do k=1,nz ; do j=js,je ; do I=is-1,ie
     ! rem needs greater than visc_rem_u and 1-Instep/visc_rem_u.
@@ -905,6 +905,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     else ; visc_rem = 1.0 - 0.5*Instep/visc_rem_u(I,j,k) ; endif
     wt_u(I,j,k) = CS%frhatu(I,j,k) * visc_rem
   enddo ; enddo ; enddo
+
   !$OMP parallel do default(shared) private(visc_rem)
   do k=1,nz ; do J=js-1,je ; do i=is,ie
     ! rem needs greater than visc_rem_v and 1-Instep/visc_rem_v.
@@ -942,7 +943,6 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   !$OMP parallel do default(shared)
   !Open ACC added Bjames 
   print *,"BMJ Loop 945 and 955: j =",je-js,"k=",nz,"i=", ie-is-1
-  !FIX: 1st  Loop throws overflow error durring run
   !$acc parallel loop 
   do j=js,je
     do k=1,nz ; do I=is-1,ie
@@ -1007,6 +1007,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     ! ###   CS%dy_Cu(I,j) / (d(uhbt)/du) (with appropriate bounds).
     BT_force_u(I,j) = forces%taux(I,j) * mass_accel_to_Z * CS%IDatu(I,j)*visc_rem_u(I,j,1)
   enddo ; enddo
+
   !$OMP parallel do default(shared)
   do J=js-1,je ; do i=is,ie
     ! ### IDatv here should be replaced with 1/D+eta(Bous) or 1/eta(non-Bous).
@@ -1029,44 +1030,79 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
 
   ! bc_accel_u & bc_accel_v are only available on the potentially
   ! non-symmetric computational domain.
+
+  print *,"BMJ Loop 1038"
   !$OMP parallel do default(shared)
+  !$acc parallel loop 
   do j=js,je ; do k=1,nz ; do I=Isq,Ieq
     BT_force_u(I,j) = BT_force_u(I,j) + wt_u(I,j,k) * bc_accel_u(I,j,k)
   enddo ; enddo ; enddo
+  !$acc end parallel 
+
   !$OMP parallel do default(shared)
+  !$acc parallel loop
   do J=Jsq,Jeq ; do k=1,nz ; do i=is,ie
     BT_force_v(i,J) = BT_force_v(i,J) + wt_v(i,J,k) * bc_accel_v(i,J,k)
   enddo ; enddo ; enddo
+  !$acc end parallel
 
   ! Determine the difference between the sum of the layer fluxes and the
   ! barotropic fluxes found from the same input velocities.
   if (add_uh0) then
+    print *,"BMJ Loop 1055"
     !$OMP parallel do default(shared)
+    !$acc parallel loop
     do j=js,je ; do I=is-1,ie ; uhbt(I,j) = 0.0 ; ubt(I,j) = 0.0 ; enddo ; enddo
+    !$acc end parallel 
+
     !$OMP parallel do default(shared)
+    !$acc parallel loop
     do J=js-1,je ; do i=is,ie ; vhbt(i,J) = 0.0 ; vbt(i,J) = 0.0 ; enddo ; enddo
+    !$acc end parallel
+
     if (CS%visc_rem_u_uh0) then
+      print *, "BMJ Loop '1032' "
       !$OMP parallel do default(shared)
+      !$acc parallel loop
       do j=js,je ; do k=1,nz ; do I=is-1,ie
         uhbt(I,j) = uhbt(I,j) + uh0(I,j,k)
         ubt(I,j) = ubt(I,j) + wt_u(I,j,k) * u_uh0(I,j,k)
       enddo ; enddo ; enddo
+      !$acc end parallel 
+
       !$OMP parallel do default(shared)
+      !$acc parallel loop
       do J=js-1,je ; do k=1,nz ; do i=is,ie
         vhbt(i,J) = vhbt(i,J) + vh0(i,J,k)
         vbt(i,J) = vbt(i,J) + wt_v(i,J,k) * v_vh0(i,J,k)
       enddo ; enddo ; enddo
+      !$acc end parallel
     else
+      !print *,"BMJ Loop 1069"
+      !print *, "size of NIMEMB_PTR_",NIMEMB_PTR_
+      !print *, "size of  NJMEM_",NJMEM_
+      !print *, "size of NKMEM ", NKMEM_
+      !print *, "shape of CS_frhatu_gpu ", shape(CS_frhatu_gpu)
+      !print *, "shape of CS%frhatu ", shape(CS%frhatu)
+
+      !CS_frhatu_gpu = CS%frhatu !Array from CS for gpu
+      
       !$OMP parallel do default(shared)
+      !!$acc parallel loop 
       do j=js,je ; do k=1,nz ; do I=is-1,ie
         uhbt(I,j) = uhbt(I,j) + uh0(I,j,k)
         ubt(I,j) = ubt(I,j) + CS%frhatu(I,j,k) * u_uh0(I,j,k)
+        !ubt(I,j) = ubt(I,j) + CS_frhatu_gpu(I,j,k) * u_uh0(I,j,k)
       enddo ; enddo ; enddo
+      !!$acc end parallel  
+
       !$OMP parallel do default(shared)
+
       do J=js-1,je ; do k=1,nz ; do i=is,ie
         vhbt(i,J) = vhbt(i,J) + vh0(i,J,k)
         vbt(i,J) = vbt(i,J) + CS%frhatv(i,J,k) * v_vh0(i,J,k)
       enddo ; enddo ; enddo
+      
     endif
     if (use_BT_cont) then
       if (CS%adjust_BT_cont) then
@@ -1095,7 +1131,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
 
     else
       !$OMP parallel do default(shared)
-      !Open acc Bjames, either this or next math error 
+      !Open acc Bjames 
       print *,"BMJ Loop 1100  and 1106: j =",je-js,"i=", ie-is-1      
       !$acc parallel loop
       do j=js,je ; do I=is-1,ie
@@ -1127,31 +1163,47 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   endif
 
 ! Calculate the initial barotropic velocities from the layer's velocities.
+  !Open ACC added Bjames
+  print *,"BMJ Loop 1135: j =",jevf+1-jsvf,"i=", ievf+1-isvf-2
   !$OMP parallel do default(shared)
+  !$acc parallel loop
   do j=jsvf-1,jevf+1 ; do I=isvf-2,ievf+1
     ubt(I,j) = 0.0 ; uhbt(I,j) = 0.0 ; u_accel_bt(I,j) = 0.0
   enddo ; enddo
+  !$acc end parallel 
+
+  print *,"BMJ Loop 1146: j =",jevf+1-jsvf-2,"i=", ievf+1-isvf-1
   !$OMP parallel do default(shared)
+  !$acc parallel loop
   do J=jsvf-2,jevf+1 ; do i=isvf-1,ievf+1
     vbt(i,J) = 0.0 ; vhbt(i,J) = 0.0 ; v_accel_bt(i,J) = 0.0
   enddo ; enddo
+  !$acc end parallel 
+
   !$OMP parallel do default(shared)
+  !$acc parallel loop
   do j=js,je ; do k=1,nz ; do I=is-1,ie
     ubt(I,j) = ubt(I,j) + wt_u(I,j,k) * U_in(I,j,k)
   enddo ; enddo ; enddo
+  !$acc end parallel 
+
   !$OMP parallel do default(shared)
+  !$acc parallel loop
   do J=js-1,je ; do k=1,nz ; do i=is,ie
     vbt(i,J) = vbt(i,J) + wt_v(i,J,k) * V_in(i,J,k)
   enddo ; enddo ;  enddo
+  !$acc end parallel
+ 
   !$OMP parallel do default(shared)
   do j=js,je ; do I=is-1,ie
     if (abs(ubt(I,j)) < CS%vel_underflow) ubt(I,j) = 0.0
   enddo ; enddo
+    
   !$OMP parallel do default(shared)
   do J=js-1,je ; do i=is,ie
     if (abs(vbt(i,J)) < CS%vel_underflow) vbt(i,J) = 0.0
   enddo ; enddo
-
+  
   if (apply_OBCs) then
     ubt_first(:,:) = ubt(:,:) ; vbt_first(:,:) = vbt(:,:)
   endif
@@ -2367,7 +2419,7 @@ subroutine set_dtbt(G, GV, US, CS, eta, pbce, BT_cont, gtot_est, SSH_add)
       gtot_N(i,j) = 0.0 ; gtot_S(i,j) = 0.0
     enddo ; enddo
     do k=1,nz ; do j=js,je ; do i=is,ie
-      gtot_E(i,j) = gtot_E(i,j) + pbce(i,j,k) * CS%frhatu(I,j,k)
+      gtot_E(i,j) = gtot_E(i,j) + pbce(i,j,k) * CS%frhatu(I,j,k) 
       gtot_W(i,j) = gtot_W(i,j) + pbce(i,j,k) * CS%frhatu(I-1,j,k)
       gtot_N(i,j) = gtot_N(i,j) + pbce(i,j,k) * CS%frhatv(i,J,k)
       gtot_S(i,j) = gtot_S(i,j) + pbce(i,j,k) * CS%frhatv(i,J-1,k)
@@ -4523,12 +4575,6 @@ subroutine register_barotropic_restarts(HI, GV, param_file, CS, restart_CS)
 end subroutine register_barotropic_restarts
 
 !> \namespace mom_barotropic
-!!
-!!  By Robert Hallberg, April 1994 - January 2007
-!!
-!!    This program contains the subroutines that time steps the
-!!  linearized barotropic equations.  btstep is used to actually
-!!  time step the barotropic equations, and contains most of the
 !!  substance of this module.
 !!
 !!    btstep uses a forwards-backwards based scheme to time step
