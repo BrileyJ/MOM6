@@ -1051,27 +1051,26 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   if (add_uh0) then
     print *,"BMJ Loop 1055"
     !$OMP parallel do default(shared)
-    !$acc parallel loop
-    do j=js,je ; do I=is-1,ie ; uhbt(I,j) = 0.0 ; ubt(I,j) = 0.0 ; enddo ; enddo
-    !$acc end parallel 
+    !$acc parallel
+    !$acc loop
+    do j=js,je ; do I=is-1,ie ; uhbt(I,j) = 0.0 ; ubt(I,j) = 0.0 ; enddo ;enddo     
 
     !$OMP parallel do default(shared)
-    !$acc parallel loop
+    !$acc loop
     do J=js-1,je ; do i=is,ie ; vhbt(i,J) = 0.0 ; vbt(i,J) = 0.0 ; enddo ; enddo
     !$acc end parallel
 
     if (CS%visc_rem_u_uh0) then
       print *, "BMJ Loop '1032' "
       !$OMP parallel do default(shared)
-      !$acc parallel loop
+      !$acc parallel
+      !$acc loop
       do j=js,je ; do k=1,nz ; do I=is-1,ie
         uhbt(I,j) = uhbt(I,j) + uh0(I,j,k)
         ubt(I,j) = ubt(I,j) + wt_u(I,j,k) * u_uh0(I,j,k)
       enddo ; enddo ; enddo
-      !$acc end parallel 
 
       !$OMP parallel do default(shared)
-      !$acc parallel loop
       do J=js-1,je ; do k=1,nz ; do i=is,ie
         vhbt(i,J) = vhbt(i,J) + vh0(i,J,k)
         vbt(i,J) = vbt(i,J) + wt_v(i,J,k) * v_vh0(i,J,k)
@@ -1149,16 +1148,22 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
 
     endif
     if (CS%BT_OBC%apply_u_OBCs) then  ! zero out pressure force across boundary
+      print *, "BMJ Loop '1099'"
       !$OMP parallel do default(shared)
+      !$acc parallel loop
       do j=js,je ; do I=is-1,ie ; if (OBC%segnum_u(I,j) /= OBC_NONE) then
         uhbt0(I,j) = 0.0
       endif ; enddo ; enddo
+      !$acc end parallel
     endif
     if (CS%BT_OBC%apply_v_OBCs) then  ! zero out PF across boundary
+      print *, "BMJ Loop 1161"
       !$OMP parallel do default(shared)
+      !$acc parallel loop
       do J=js-1,je ; do i=is,ie ; if (OBC%segnum_v(i,J) /= OBC_NONE) then
         vhbt0(i,J) = 0.0
-      endif ; enddo ; enddo
+      endif ; enddo ; enddo 
+      !$acc end parallel
     endif
   endif
 
@@ -1229,14 +1234,24 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     if (id_clock_calc_pre > 0) call cpu_clock_end(id_clock_calc_pre)
     if (id_clock_pass_pre > 0) call cpu_clock_begin(id_clock_pass_pre)
     tmp_u(:,:) = 0.0 ; tmp_v(:,:) = 0.0
-    do j=js,je ; do I=Isq,Ieq ; tmp_u(I,j) = BT_force_u(I,j) ; enddo ; enddo
+    print *, "BMJ Loop '1155'"
+    !$acc parallel loop
+    do j=js,je ; do I=Isq,Ieq ; tmp_u(I,j) = BT_force_u(I,j) ; enddo ; enddo 
+    !$acc end parallel 
+    !$acc parallel loop
     do J=Jsq,Jeq ; do i=is,ie ; tmp_v(i,J) = BT_force_v(i,J) ; enddo ; enddo
+    !$acc end parallel 
     if (nonblock_setup) then
       call start_group_pass(CS%pass_tmp_uv, G%Domain)
     else
       call do_group_pass(CS%pass_tmp_uv, G%Domain)
+      print *, "Inner Loop 1155"
+      !$acc parallel loop
       do j=jsd,jed ; do I=IsdB,IedB ; BT_force_u(I,j) = tmp_u(I,j) ; enddo ; enddo
+      !$acc end parallel 
+      !$acc parallel loop
       do J=JsdB,JedB ; do i=isd,ied ; BT_force_v(i,J) = tmp_v(i,J) ; enddo ; enddo
+      !$acc end parallel
     endif
     if (id_clock_pass_pre > 0) call cpu_clock_end(id_clock_pass_pre)
     if (id_clock_calc_pre > 0) call cpu_clock_begin(id_clock_calc_pre)
@@ -1252,33 +1267,89 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   endif
 
   ! Determine the weighted Coriolis parameters for the neighboring velocities.
-  !$OMP parallel do default(shared)
-  do J=jsvf-1,jevf ; do i=isvf-1,ievf+1
-    if (CS%Sadourny) then
-      amer(I-1,j) = DCor_u(I-1,j) * q(I-1,J)
-      bmer(I,j) = DCor_u(I,j) * q(I,J)
-      cmer(I,j+1) = DCor_u(I,j+1) * q(I,J)
-      dmer(I-1,j+1) = DCor_u(I-1,j+1) * q(I-1,J)
+ ! 
+ ! !$OMP parallel do default(shared)
+ ! do J=jsvf-1,jevf ; do i=isvf-1,ievf+1
+ !   if (CS%Sadourny) then
+ !     amer(I-1,j) = DCor_u(I-1,j) * q(I-1,J)
+ !     bmer(I,j) = DCor_u(I,j) * q(I,J)
+ !     cmer(I,j+1) = DCor_u(I,j+1) * q(I,J)
+ !     dmer(I-1,j+1) = DCor_u(I-1,j+1) * q(I-1,J)
+ !   else
+ !     amer(I-1,j) = DCor_u(I-1,j) * &
+ !                   ((q(I,J) + q(I-1,J-1)) + q(I-1,J)) / 3.0
+ !     bmer(I,j) = DCor_u(I,j) * &
+ !                 (q(I,J) + (q(I-1,J) + q(I,J-1))) / 3.0
+ !     cmer(I,j+1) = DCor_u(I,j+1) * &
+ !                   (q(I,J) + (q(I-1,J) + q(I,J+1))) / 3.0
+ !     dmer(I-1,j+1) = DCor_u(I-1,j+1) * &
+ !                     ((q(I,J) + q(I-1,J+1)) + q(I-1,J)) / 3.0
+ !   endif
+ ! enddo ; enddo
+ 
+   !$OMP parallel do default(shared)
+   if (CS%Sadourny) then
+     print *, "If out of Loop 1 if"
+     !$acc parallel loop
+     do J=jsvf-1,jevf ; do i=isvf-1,ievf+1
+       amer(I-1,j) = DCor_u(I-1,j) * q(I-1,J)
+       bmer(I,j) = DCor_u(I,j) * q(I,J)
+       cmer(I,j+1) = DCor_u(I,j+1) * q(I,J)
+       dmer(I-1,j+1) = DCor_u(I-1,j+1) * q(I-1,J)
+     enddo; enddo
+     !$acc end parallel 
     else
-      amer(I-1,j) = DCor_u(I-1,j) * &
-                    ((q(I,J) + q(I-1,J-1)) + q(I-1,J)) / 3.0
-      bmer(I,j) = DCor_u(I,j) * &
-                  (q(I,J) + (q(I-1,J) + q(I,J-1))) / 3.0
-      cmer(I,j+1) = DCor_u(I,j+1) * &
-                    (q(I,J) + (q(I-1,J) + q(I,J+1))) / 3.0
-      dmer(I-1,j+1) = DCor_u(I-1,j+1) * &
+     print *,"If out of Loop 1 else"
+     !$acc parallel loop
+     do J=jsvf-1,jevf ; do i=isvf-1,ievf+1
+       amer(I-1,j) = DCor_u(I-1,j) * &
+                     ((q(I,J) + q(I-1,J-1)) + q(I-1,J)) / 3.0
+       bmer(I,j) = DCor_u(I,j) * &
+                   (q(I,J) + (q(I-1,J) + q(I,J-1))) / 3.0
+       cmer(I,j+1) = DCor_u(I,j+1) * &
+                     (q(I,J) + (q(I-1,J) + q(I,J+1))) / 3.0
+       dmer(I-1,j+1) = DCor_u(I-1,j+1) * &
                       ((q(I,J) + q(I-1,J+1)) + q(I-1,J)) / 3.0
-    endif
-  enddo ; enddo
+      enddo ; enddo
+      !$acc end parallel
+   endif
+!  Origonal Loop 2 before moving If out of Loop 
+!  !$OMP parallel do default(shared)
+!  do j=jsvf-1,jevf+1 ; do I=isvf-1,ievf
+!    if (CS%Sadourny) then
+!      azon(I,j) = DCor_v(i+1,J) * q(I,J)
+!      bzon(I,j) = DCor_v(i,J) * q(I,J)
+!      czon(I,j) = DCor_v(i,J-1) * q(I,J-1)
+!      dzon(I,j) = DCor_v(i+1,J-1) * q(I,J-1)
+!    else
+!      azon(I,j) = DCor_v(i+1,J) * &
+!                  (q(I,J) + (q(I+1,J) + q(I,J-1))) / 3.0
+!      bzon(I,j) = DCor_v(i,J) * &
+!                  (q(I,J) + (q(I-1,J) + q(I,J-1))) / 3.0
+!      czon(I,j) = DCor_v(i,J-1) * &
+!                  ((q(I,J) + q(I-1,J-1)) + q(I,J-1)) / 3.0
+!      dzon(I,j) = DCor_v(i+1,J-1) * &
+!                  ((q(I,J) + q(I+1,J-1)) + q(I,J-1)) / 3.0
+!    endif
+!  enddo ; enddo
 
+  !BJames Rearanged to move If out of Loop
   !$OMP parallel do default(shared)
-  do j=jsvf-1,jevf+1 ; do I=isvf-1,ievf
-    if (CS%Sadourny) then
+  if (CS%Sadourny) then
+    print *, "If out of Loop 2 if"
+    !$acc parallel loop
+    do j=jsvf-1,jevf+1 ; do I=isvf-1,ievf
       azon(I,j) = DCor_v(i+1,J) * q(I,J)
       bzon(I,j) = DCor_v(i,J) * q(I,J)
       czon(I,j) = DCor_v(i,J-1) * q(I,J-1)
       dzon(I,j) = DCor_v(i+1,J-1) * q(I,J-1)
-    else
+    enddo; enddo 
+    !$acc end parallel
+  else
+    print *, "If out of Loop 2 else"
+    !$acc parallel loop
+    do j=jsvf-1,jevf+1 ; do I=isvf-1,ievf
+
       azon(I,j) = DCor_v(i+1,J) * &
                   (q(I,J) + (q(I+1,J) + q(I,J-1))) / 3.0
       bzon(I,j) = DCor_v(i,J) * &
@@ -1287,17 +1358,22 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
                   ((q(I,J) + q(I-1,J-1)) + q(I,J-1)) / 3.0
       dzon(I,j) = DCor_v(i+1,J-1) * &
                   ((q(I,J) + q(I+1,J-1)) + q(I,J-1)) / 3.0
-    endif
-  enddo ; enddo
-
+    enddo; enddo
+    !$acc end parallel
+  endif
+ 
 ! Complete the previously initiated message passing.
   if (id_clock_calc_pre > 0) call cpu_clock_end(id_clock_calc_pre)
   if (id_clock_pass_pre > 0) call cpu_clock_begin(id_clock_pass_pre)
   if (nonblock_setup) then
     if ((Isq > is-1) .or. (Jsq > js-1)) then
       call complete_group_pass(CS%pass_tmp_uv, G%Domain)
+      !$acc parallel loop
       do j=jsd,jed ; do I=IsdB,IedB ; BT_force_u(I,j) = tmp_u(I,j) ; enddo ; enddo
+      !$acc end parallel
+      !$acc parallel loop
       do J=JsdB,JedB ; do i=isd,ied ; BT_force_v(i,J) = tmp_v(i,J) ; enddo ; enddo
+      !$acc end parallel
     endif
     call complete_group_pass(CS%pass_gtot, CS%BT_Domain)
     call complete_group_pass(CS%pass_ubt_Cor, G%Domain)
@@ -1306,24 +1382,30 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     call do_group_pass(CS%pass_ubt_Cor, G%Domain)
   endif
   ! The various elements of gtot are positive definite but directional, so use
-  ! the polarity arrays to sort out when the directions have shifted.
+  ! the polarity arrays to sort out when the directions have shifted.  
   do j=jsvf-1,jevf+1 ; do i=isvf-1,ievf+1
     if (CS%ua_polarity(i,j) < 0.0) call swap(gtot_E(i,j), gtot_W(i,j))
     if (CS%va_polarity(i,j) < 0.0) call swap(gtot_N(i,j), gtot_S(i,j))
   enddo ; enddo
-
+  
+  print *, "Loop 1392 = 1248"
   !$OMP parallel do default(shared)
+  !$acc parallel loop 
   do j=js,je ; do I=is-1,ie
     Cor_ref_u(I,j) =  &
         ((azon(I,j) * vbt_Cor(i+1,j) + czon(I,j) * vbt_Cor(i  ,j-1)) + &
          (bzon(I,j) * vbt_Cor(i  ,j) + dzon(I,j) * vbt_Cor(i+1,j-1)))
   enddo ; enddo
+  !$acc end parallel 
+
   !$OMP parallel do default(shared)
+  !$acc parallel loop
   do J=js-1,je ; do i=is,ie
     Cor_ref_v(i,J) = -1.0 * &
         ((amer(I-1,j) * ubt_Cor(I-1,j) + cmer(I  ,j+1) * ubt_Cor(I  ,j+1)) + &
          (bmer(I  ,j) * ubt_Cor(I  ,j) + dmer(I-1,j+1) * ubt_Cor(I-1,j+1)))
   enddo ; enddo
+  !$acc end parallel
 
   ! Now start new halo updates.
   if (nonblock_setup) then
@@ -1357,16 +1439,23 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     av_rem_v(i,J) = av_rem_v(i,J) + CS%frhatv(i,J,k) * visc_rem_v(i,J,k)
   enddo ; enddo ; enddo
   if (CS%strong_drag) then
+    print *, "Loop 1443 = 1291"
+    !Bjames TODO
     !$OMP do
+    !$acc parallel
+    !$acc loop
     do j=js,je ; do I=is-1,ie
       bt_rem_u(I,j) = G%mask2dCu(I,j) * &
          ((nstep * av_rem_u(I,j)) / (1.0 + (nstep-1)*av_rem_u(I,j)))
     enddo ; enddo
+     
     !$OMP do
+    !$acc loop
     do J=js-1,je ; do i=is,ie
       bt_rem_v(i,J) = G%mask2dCv(i,J) * &
          ((nstep * av_rem_v(i,J)) / (1.0 + (nstep-1)*av_rem_v(i,J)))
-    enddo ; enddo
+    enddo ; enddo 
+    !$acc end parallel
   else
     !$OMP do
     do j=js,je ; do I=is-1,ie
@@ -1404,28 +1493,40 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
 
   ! Zero out the arrays for various time-averaged quantities.
   if (find_etaav) then
+    print *, "Loop 1494 = 1337"
     !$OMP do
+    !$acc parallel loop
     do j=jsvf-1,jevf+1 ; do i=isvf-1,ievf+1
       eta_sum(i,j) = 0.0 ; eta_wtd(i,j) = 0.0
     enddo ; enddo
+    !$acc end parallel 
   else
     !$OMP do
+    !$acc parallel loop
     do j=jsvf-1,jevf+1 ; do i=isvf-1,ievf+1
       eta_wtd(i,j) = 0.0
     enddo ; enddo
+    !$acc end parallel
    endif
+  
+  print *, "Loop 1512 = 1350"
   !$OMP do
+  !$acc parallel loop
   do j=jsvf-1,jevf+1 ; do I=isvf-1,ievf
     ubt_sum(I,j) = 0.0 ; uhbt_sum(I,j) = 0.0
     PFu_bt_sum(I,j) = 0.0 ; Coru_bt_sum(I,j) = 0.0
     ubt_wtd(I,j) = 0.0 ; ubt_trans(I,j) = 0.0
   enddo ; enddo
+  !$acc end parallel 
+
   !$OMP do
+  !$acc parallel loop
   do J=jsvf-1,jevf ; do i=isvf-1,ievf+1
     vbt_sum(i,J) = 0.0 ; vhbt_sum(i,J) = 0.0
     PFv_bt_sum(i,J) = 0.0 ; Corv_bt_sum(i,J) = 0.0
     vbt_wtd(i,J) = 0.0 ; vbt_trans(I,j) = 0.0
   enddo ; enddo
+  !$acc end parallel 
 
   ! Set the mass source, after first initializing the halos to 0.
   !$OMP do
