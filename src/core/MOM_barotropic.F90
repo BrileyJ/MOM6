@@ -1132,7 +1132,8 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       !$OMP parallel do default(shared)
       !Open acc Bjames 
       print *,"BMJ Loop 1100  and 1106: j =",je-js,"i=", ie-is-1      
-      !$acc parallel loop
+      !$acc parallel
+      !$acc loop
       do j=js,je ; do I=is-1,ie
         uhbt0(I,j) = uhbt(I,j) - Datu(I,j)*ubt(I,j)
       enddo ; enddo 
@@ -1579,7 +1580,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       !$OMP parallel do default(shared) private(Idt_max2,H_eff_dx2,dyn_coef_max,ice_strength)
       print *, "Massive Loop 1581 with G%"
       !Loop not called under current configuration
-      !$acc parallel loop
+      !!$acc parallel loop
       do j=js,je ; do i=is,ie
       ! First determine the maximum stable value for dyn_coef_eta.
 
@@ -1609,7 +1610,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       ! Units of dyn_coef: [L2 T-2 H-1 ~> m s-2 or m4 s-2 kg-1]
       dyn_coef_eta(i,j) = min(dyn_coef_max, ice_strength * GV%H_to_Z)
     enddo ; enddo 
-    !$acc end parallel
+    !!$acc end parallel
     endif
   endif
 
@@ -2201,26 +2202,22 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     if (apply_OBCs) then
       if (CS%BT_OBC%apply_u_OBCs) then  ! copy back the value for u-points on the boundary.
         !GOMP parallel do default(shared)
-        !$acc parallel loop
         do j=js,je ; do I=is-1,ie
           if (OBC%segnum_u(I,j) /= OBC_NONE) then
             ubt_sum(I,j) = ubt_sum_prev(I,j) ; uhbt_sum(I,j) = uhbt_sum_prev(I,j)
             ubt_wtd(I,j) = ubt_wtd_prev(I,j)
           endif
         enddo ; enddo
-        !$acc end parallel
       endif
 
       if (CS%BT_OBC%apply_v_OBCs) then  ! copy back the value for v-points on the boundary.
-        if (OBC%segnum_v(i,J) /= OBC_NONE) then
         !GOMP parallel do default(shared)
-        !$acc parallel loop
-          do J=js-1,je ; do I=is,ie
+         do J=js-1,je ; do I=is,ie
+          if (OBC%segnum_v(i,J) /= OBC_NONE) then
             vbt_sum(i,J) = vbt_sum_prev(i,J) ; vhbt_sum(i,J) = vhbt_sum_prev(i,J)
             vbt_wtd(i,J) = vbt_wtd_prev(i,J)
-          enddo ; enddo
-        !$acc end parallel
-        endif
+          endif
+        enddo ; enddo
       endif
 
       call apply_velocity_OBCs(OBC, ubt, vbt, uhbt, vhbt, &
