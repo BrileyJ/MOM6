@@ -1136,10 +1136,9 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       do j=js,je ; do I=is-1,ie
         uhbt0(I,j) = uhbt(I,j) - Datu(I,j)*ubt(I,j)
       enddo ; enddo 
-      !$acc end parallel
 
       !$OMP parallel do default(shared)
-      !$acc parallel loop 
+      !$acc loop 
       do J=js-1,je ; do i=is,ie
         vhbt0(i,J) = vhbt(i,J) - Datv(i,J)*vbt(i,J)
       enddo ; enddo
@@ -1171,29 +1170,27 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   !Open ACC added Bjames
   print *,"BMJ Loop 1135: j =",jevf+1-jsvf,"i=", ievf+1-isvf-2
   !$OMP parallel do default(shared)
-  !$acc parallel loop
+  !$acc parallel
+  !$acc loop
   do j=jsvf-1,jevf+1 ; do I=isvf-2,ievf+1
     ubt(I,j) = 0.0 ; uhbt(I,j) = 0.0 ; u_accel_bt(I,j) = 0.0
   enddo ; enddo
-  !$acc end parallel 
 
-  print *,"BMJ Loop 1146: j =",jevf+1-jsvf-2,"i=", ievf+1-isvf-1
+  print *,"BMJ Loop 1146 2nd loop in region"
   !$OMP parallel do default(shared)
-  !$acc parallel loop
+  !$acc loop
   do J=jsvf-2,jevf+1 ; do i=isvf-1,ievf+1
     vbt(i,J) = 0.0 ; vhbt(i,J) = 0.0 ; v_accel_bt(i,J) = 0.0
   enddo ; enddo
-  !$acc end parallel 
 
   !$OMP parallel do default(shared)
-  !$acc parallel loop
+  !$acc loop
   do j=js,je ; do k=1,nz ; do I=is-1,ie
     ubt(I,j) = ubt(I,j) + wt_u(I,j,k) * U_in(I,j,k)
-  enddo ; enddo ; enddo
-  !$acc end parallel 
+  enddo ; enddo ; enddo 
 
   !$OMP parallel do default(shared)
-  !$acc parallel loop
+  !$acc loop
   do J=js-1,je ; do k=1,nz ; do i=is,ie
     vbt(i,J) = vbt(i,J) + wt_v(i,J,k) * V_in(i,J,k)
   enddo ; enddo ;  enddo
@@ -1235,10 +1232,10 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     if (id_clock_pass_pre > 0) call cpu_clock_begin(id_clock_pass_pre)
     tmp_u(:,:) = 0.0 ; tmp_v(:,:) = 0.0
     print *, "BMJ Loop '1155'"
-    !$acc parallel loop
-    do j=js,je ; do I=Isq,Ieq ; tmp_u(I,j) = BT_force_u(I,j) ; enddo ; enddo 
-    !$acc end parallel 
-    !$acc parallel loop
+    !$acc parallel
+    !$acc loop
+    do j=js,je ; do I=Isq,Ieq ; tmp_u(I,j) = BT_force_u(I,j) ; enddo ; enddo  
+    !$acc loop
     do J=Jsq,Jeq ; do i=is,ie ; tmp_v(i,J) = BT_force_v(i,J) ; enddo ; enddo
     !$acc end parallel 
     if (nonblock_setup) then
