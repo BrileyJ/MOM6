@@ -926,16 +926,22 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   !$acc end parallel
 
   !$OMP parallel do default(shared)
+  !$acc parallel loop
   do J=js-1,je ; do i=is-1,ie+1 ; vbt_Cor(i,J) = 0.0 ; enddo ; enddo
   !$OMP parallel do default(shared)
+  !$acc end parallel  
+
+  !!$acc parallel loop
   do j=js,je ; do k=1,nz ; do I=is-1,ie
     ubt_Cor(I,j) = ubt_Cor(I,j) + wt_u(I,j,k) * U_Cor(I,j,k)
   enddo ; enddo ; enddo
   !$OMP parallel do default(shared)
+  !!$acc loop
   do J=js-1,je ; do k=1,nz ; do i=is,ie
     vbt_Cor(i,J) = vbt_Cor(i,J) + wt_v(i,J,k) * V_Cor(i,J,k)
   enddo ; enddo ; enddo
-  
+  !!$acc end parallel
+
   ! The gtot arrays are the effective layer-weighted reduced gravities for
   ! accelerations across the various faces, with names for the relative
   ! locations of the faces to the pressure point.  They will have their halos
@@ -943,24 +949,24 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   !$OMP parallel do default(shared)
   !Open ACC added Bjames 
   print *,"BMJ Loop 945 and 955: j =",je-js,"k=",nz,"i=", ie-is-1
-  !$acc parallel loop 
+  !!$acc parallel loop 
   do j=js,je
     do k=1,nz ; do I=is-1,ie
       gtot_E(i,j)   = gtot_E(i,j)   + pbce(i,j,k)   * wt_u(I,j,k)
       gtot_W(i+1,j) = gtot_W(i+1,j) + pbce(i+1,j,k) * wt_u(I,j,k)
     enddo ; enddo
   enddo
-  !$acc end parallel 
+  !!$acc end parallel 
 
   !$OMP parallel do default(shared)
-  !$acc parallel loop  
+  !!$acc parallel loop  
   do J=js-1,je
     do k=1,nz ; do i=is,ie
       gtot_N(i,j)   = gtot_N(i,j)   + pbce(i,j,k)   * wt_v(i,J,k)
       gtot_S(i,j+1) = gtot_S(i,j+1) + pbce(i,j+1,k) * wt_v(i,J,k)
     enddo ; enddo
   enddo
-  !$acc end parallel
+  !!$acc end parallel
 
 
   if (CS%tides) then
@@ -1033,18 +1039,18 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
 
   print *,"BMJ Loop 1038"
   !$OMP parallel do default(shared)
-  !$acc parallel loop 
+  !!$acc parallel loop 
   do j=js,je ; do k=1,nz ; do I=Isq,Ieq
     BT_force_u(I,j) = BT_force_u(I,j) + wt_u(I,j,k) * bc_accel_u(I,j,k)
   enddo ; enddo ; enddo
-  !$acc end parallel 
+  !!$acc end parallel 
 
   !$OMP parallel do default(shared)
-  !$acc parallel loop
+  !!$acc parallel loop
   do J=Jsq,Jeq ; do k=1,nz ; do i=is,ie
     BT_force_v(i,J) = BT_force_v(i,J) + wt_v(i,J,k) * bc_accel_v(i,J,k)
   enddo ; enddo ; enddo
-  !$acc end parallel
+  !!$acc end parallel
 
   ! Determine the difference between the sum of the layer fluxes and the
   ! barotropic fluxes found from the same input velocities.
@@ -1063,19 +1069,19 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     if (CS%visc_rem_u_uh0) then
       print *, "BMJ Loop '1032' "
       !$OMP parallel do default(shared)
-      !$acc parallel
-      !$acc loop
+      !!$acc parallel loop
       do j=js,je ; do k=1,nz ; do I=is-1,ie
         uhbt(I,j) = uhbt(I,j) + uh0(I,j,k)
         ubt(I,j) = ubt(I,j) + wt_u(I,j,k) * u_uh0(I,j,k)
       enddo ; enddo ; enddo
 
       !$OMP parallel do default(shared)
+      !!$acc loop
       do J=js-1,je ; do k=1,nz ; do i=is,ie
         vhbt(i,J) = vhbt(i,J) + vh0(i,J,k)
         vbt(i,J) = vbt(i,J) + wt_v(i,J,k) * v_vh0(i,J,k)
       enddo ; enddo ; enddo
-      !$acc end parallel
+      !!$acc end parallel
     else
       !print *,"BMJ Loop 1069"
       !print *, "size of NIMEMB_PTR_",NIMEMB_PTR_
@@ -1120,6 +1126,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
                                         G, US, MS, 1+ievf-ie)
       endif
       !$OMP parallel do default(shared)
+      !TODO add the find function acceleration
       do j=js,je ; do I=is-1,ie
         uhbt0(I,j) = uhbt(I,j) - find_uhbt(ubt(I,j), BTCL_u(I,j), US)
       enddo ; enddo
@@ -1171,42 +1178,47 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   !Open ACC added Bjames
   print *,"BMJ Loop 1135: j =",jevf+1-jsvf,"i=", ievf+1-isvf-2
   !$OMP parallel do default(shared)
-  !$acc parallel
-  !$acc loop
+  !$acc parallel loop
   do j=jsvf-1,jevf+1 ; do I=isvf-2,ievf+1
     ubt(I,j) = 0.0 ; uhbt(I,j) = 0.0 ; u_accel_bt(I,j) = 0.0
   enddo ; enddo
+  !$acc end parallel 
 
   print *,"BMJ Loop 1146 2nd loop in region"
   !$OMP parallel do default(shared)
-  !$acc loop
+  !$acc parallel loop
   do J=jsvf-2,jevf+1 ; do i=isvf-1,ievf+1
     vbt(i,J) = 0.0 ; vhbt(i,J) = 0.0 ; v_accel_bt(i,J) = 0.0
   enddo ; enddo
+  !$acc end parallel 
 
   !$OMP parallel do default(shared)
-  !$acc loop
+  !!$acc loop
   do j=js,je ; do k=1,nz ; do I=is-1,ie
     ubt(I,j) = ubt(I,j) + wt_u(I,j,k) * U_in(I,j,k)
   enddo ; enddo ; enddo 
-
+  print *, "1192 Parallel region" 
   !$OMP parallel do default(shared)
-  !$acc loop
+  !!$acc loop
   do J=js-1,je ; do k=1,nz ; do i=is,ie
     vbt(i,J) = vbt(i,J) + wt_v(i,J,k) * V_in(i,J,k)
   enddo ; enddo ;  enddo
-  !$acc end parallel
  
   !$OMP parallel do default(shared)
+  !$acc parallel loop
   do j=js,je ; do I=is-1,ie
     if (abs(ubt(I,j)) < CS%vel_underflow) ubt(I,j) = 0.0
   enddo ; enddo
-    
+  !$acc end parallel
+ 
+  print *,"1205 parallel region"  
   !$OMP parallel do default(shared)
+  !$acc parallel loop
   do J=js-1,je ; do i=is,ie
     if (abs(vbt(i,J)) < CS%vel_underflow) vbt(i,J) = 0.0
   enddo ; enddo
-  
+  !$acc end parallel
+
   if (apply_OBCs) then
     ubt_first(:,:) = ubt(:,:) ; vbt_first(:,:) = vbt(:,:)
   endif
@@ -1442,7 +1454,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     !$OMP do
     !!$acc parallel
     !!$acc loop
-    do j=js,je ; do I=is-1,ie
+  do j=js,je ; do I=is-1,ie
       bt_rem_u(I,j) = G%mask2dCu(I,j) * &
          ((nstep * av_rem_u(I,j)) / (1.0 + (nstep-1)*av_rem_u(I,j)))
     enddo ; enddo
@@ -1795,7 +1807,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       else
         print *, "Loop 1805 else statement"
         !GOMP do
-        !$acc parallel loop
+        !!$acc parallel loop
         do j=jsv-1,jev+1 ; do i=isv-1,iev+1
           eta_pred(i,j) = (eta(i,j) + eta_src(i,j)) + (dtbt * CS%IareaT(i,j)) * &
               (((Datu(I-1,j)*ubt(I-1,j) + uhbt0(I-1,j)) - &
@@ -1803,7 +1815,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
                ((Datv(i,J-1)*vbt(i,J-1) + vhbt0(i,J-1)) - &
                 (Datv(i,J)*vbt(i,J) + vhbt0(i,J))))
         enddo ; enddo
-        !$acc end parallel
+        !!$acc end parallel
       endif
 
       if (CS%dynamic_psurf) then
