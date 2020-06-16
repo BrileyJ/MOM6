@@ -853,6 +853,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
 
   ! Zero out various wide-halo arrays.
   !$OMP parallel do default(shared)
+  !$acc parallel loop
   do j=CS%jsdw,CS%jedw ; do i=CS%isdw,CS%iedw
     gtot_E(i,j) = 0.0 ; gtot_W(i,j) = 0.0
     gtot_N(i,j) = 0.0 ; gtot_S(i,j) = 0.0
@@ -864,34 +865,45 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     p_surf_dyn(i,j) = 0.0
     if (CS%dynamic_psurf) dyn_coef_eta(i,j) = 0.0
   enddo ; enddo
+  !$acc end parallel 
+
   !   The halo regions of various arrays need to be initialized to
   ! non-NaNs in case the neighboring domains are not part of the ocean.
   ! Otherwise a halo update later on fills in the correct values.
   !$OMP parallel do default(shared)
+  !$acc parallel loop
   do j=CS%jsdw,CS%jedw ; do I=CS%isdw-1,CS%iedw
     Cor_ref_u(I,j) = 0.0 ; BT_force_u(I,j) = 0.0 ; ubt(I,j) = 0.0
     Datu(I,j) = 0.0 ; bt_rem_u(I,j) = 0.0 ; uhbt0(I,j) = 0.0
   enddo ; enddo
+  !$acc end parallel 
+
   !$OMP parallel do default(shared)
+  !$acc parallel loop
   do J=CS%jsdw-1,CS%jedw ; do i=CS%isdw,CS%iedw
     Cor_ref_v(i,J) = 0.0 ; BT_force_v(i,J) = 0.0 ; vbt(i,J) = 0.0
     Datv(i,J) = 0.0 ; bt_rem_v(i,J) = 0.0 ; vhbt0(I,j) = 0.0
   enddo ; enddo
+  !$acc end parallel
 
   ! Copy input arrays into their wide-halo counterparts.
   if (interp_eta_PF) then
-    !$OMP parallel do default(shared)
+    !$OMP parallel do default(shared) 
+    !$acc parallel loop
     do j=G%jsd,G%jed ; do i=G%isd,G%ied ! Was "do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1" but doing so breaks OBC. Not sure why?
       eta(i,j) = eta_in(i,j)
       eta_PF_1(i,j) = eta_PF_start(i,j)
       d_eta_PF(i,j) = eta_PF_in(i,j) - eta_PF_start(i,j)
     enddo ; enddo
+    !$acc end parallel
   else
     !$OMP parallel do default(shared)
+    !$acc parallel loop
     do j=G%jsd,G%jed ; do i=G%isd,G%ied !: Was "do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1" but doing so breaks OBC. Not sure why?
       eta(i,j) = eta_in(i,j)
       eta_PF(i,j) = eta_PF_in(i,j)
     enddo ; enddo
+    !$acc end parallel
   endif
      
   !$OMP parallel do default(shared) private(visc_rem)
@@ -929,44 +941,46 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   !$acc parallel loop
   do J=js-1,je ; do i=is-1,ie+1 ; vbt_Cor(i,J) = 0.0 ; enddo ; enddo
   !$OMP parallel do default(shared)
-  !$acc end parallel  
+  !$acc end parallel
 
-  !!$acc parallel loop
+  !$acc parallel loop
   do j=js,je ; do k=1,nz ; do I=is-1,ie
     ubt_Cor(I,j) = ubt_Cor(I,j) + wt_u(I,j,k) * U_Cor(I,j,k)
   enddo ; enddo ; enddo
+  !$acc end parallel 
   !$OMP parallel do default(shared)
-  !!$acc loop
+  !$acc parallel loop
   do J=js-1,je ; do k=1,nz ; do i=is,ie
     vbt_Cor(i,J) = vbt_Cor(i,J) + wt_v(i,J,k) * V_Cor(i,J,k)
   enddo ; enddo ; enddo
-  !!$acc end parallel
-
+  !$acc end parallel
+  
   ! The gtot arrays are the effective layer-weighted reduced gravities for
   ! accelerations across the various faces, with names for the relative
   ! locations of the faces to the pressure point.  They will have their halos
   ! updated later on.
   !$OMP parallel do default(shared)
-  !Open ACC added Bjames 
-  print *,"BMJ Loop 945 and 955: j =",je-js,"k=",nz,"i=", ie-is-1
-  !!$acc parallel loop 
+ 
+  !Loop with dependency flag
+  !$acc parallel loop 
   do j=js,je
     do k=1,nz ; do I=is-1,ie
       gtot_E(i,j)   = gtot_E(i,j)   + pbce(i,j,k)   * wt_u(I,j,k)
       gtot_W(i+1,j) = gtot_W(i+1,j) + pbce(i+1,j,k) * wt_u(I,j,k)
     enddo ; enddo
   enddo
-  !!$acc end parallel 
+  !$acc end parallel 
 
+  !Loop with dependency flag
   !$OMP parallel do default(shared)
-  !!$acc parallel loop  
+  !$acc parallel loop  
   do J=js-1,je
     do k=1,nz ; do i=is,ie
       gtot_N(i,j)   = gtot_N(i,j)   + pbce(i,j,k)   * wt_v(i,J,k)
       gtot_S(i,j+1) = gtot_S(i,j+1) + pbce(i,j+1,k) * wt_v(i,J,k)
     enddo ; enddo
   enddo
-  !!$acc end parallel
+  !$acc end parallel
 
 
   if (CS%tides) then
@@ -1037,25 +1051,25 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   ! bc_accel_u & bc_accel_v are only available on the potentially
   ! non-symmetric computational domain.
 
-  print *,"BMJ Loop 1038"
+  !Loop with dependency flag
   !$OMP parallel do default(shared)
-  !!$acc parallel loop 
+  !$acc parallel loop 
   do j=js,je ; do k=1,nz ; do I=Isq,Ieq
     BT_force_u(I,j) = BT_force_u(I,j) + wt_u(I,j,k) * bc_accel_u(I,j,k)
   enddo ; enddo ; enddo
-  !!$acc end parallel 
+  !$acc end parallel 
 
+  !Loop with dependency flag
   !$OMP parallel do default(shared)
-  !!$acc parallel loop
+  !$acc parallel loop
   do J=Jsq,Jeq ; do k=1,nz ; do i=is,ie
     BT_force_v(i,J) = BT_force_v(i,J) + wt_v(i,J,k) * bc_accel_v(i,J,k)
   enddo ; enddo ; enddo
-  !!$acc end parallel
+  !$acc end parallel
 
   ! Determine the difference between the sum of the layer fluxes and the
   ! barotropic fluxes found from the same input velocities.
   if (add_uh0) then
-    print *,"BMJ Loop 1055"
     !$OMP parallel do default(shared)
     !$acc parallel
     !$acc loop
@@ -1067,7 +1081,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     !$acc end parallel
 
     if (CS%visc_rem_u_uh0) then
-      print *, "BMJ Loop '1032' "
+      !Loop with dependency flag
       !$OMP parallel do default(shared)
       !!$acc parallel loop
       do j=js,je ; do k=1,nz ; do I=is-1,ie
@@ -1083,7 +1097,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       enddo ; enddo ; enddo
       !!$acc end parallel
     else
-      !print *,"BMJ Loop 1069"
+      !!print *,"BMJ Loop 1069"
       !print *, "size of NIMEMB_PTR_",NIMEMB_PTR_
       !print *, "size of  NJMEM_",NJMEM_
       !print *, "size of NKMEM ", NKMEM_
@@ -1125,20 +1139,23 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         call adjust_local_BT_cont_types(ubt, uhbt, vbt, vhbt, BTCL_u, BTCL_v, &
                                         G, US, MS, 1+ievf-ie)
       endif
-      !$OMP parallel do default(shared)
-      !TODO add the find function acceleration
+
+      !$OMP parallel do default(shared) 
+      !$acc parallel loop
       do j=js,je ; do I=is-1,ie
         uhbt0(I,j) = uhbt(I,j) - find_uhbt(ubt(I,j), BTCL_u(I,j), US)
       enddo ; enddo
+      !$acc end parallel
+      
       !$OMP parallel do default(shared)
+      !$acc parallel loop
       do J=js-1,je ; do i=is,ie
         vhbt0(i,J) = vhbt(i,J) - find_vhbt(vbt(i,J), BTCL_v(i,J), US)
       enddo ; enddo
+      !$acc end parallel 
 
     else
-      !$OMP parallel do default(shared)
-      !Open acc Bjames 
-      print *,"BMJ Loop 1100  and 1106: j =",je-js,"i=", ie-is-1      
+      !$OMP parallel do default(shared)      
       !$acc parallel
       !$acc loop
       do j=js,je ; do I=is-1,ie
@@ -1155,7 +1172,6 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
 
     endif
     if (CS%BT_OBC%apply_u_OBCs) then  ! zero out pressure force across boundary
-      print *, "BMJ Loop '1099'"
       !$OMP parallel do default(shared)
       !$acc parallel loop
       do j=js,je ; do I=is-1,ie ; if (OBC%segnum_u(I,j) /= OBC_NONE) then
@@ -1164,7 +1180,6 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       !$acc end parallel
     endif
     if (CS%BT_OBC%apply_v_OBCs) then  ! zero out PF across boundary
-      print *, "BMJ Loop 1161"
       !$OMP parallel do default(shared)
       !$acc parallel loop
       do J=js-1,je ; do i=is,ie ; if (OBC%segnum_v(i,J) /= OBC_NONE) then
@@ -1175,8 +1190,6 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   endif
 
 ! Calculate the initial barotropic velocities from the layer's velocities.
-  !Open ACC added Bjames
-  print *,"BMJ Loop 1135: j =",jevf+1-jsvf,"i=", ievf+1-isvf-2
   !$OMP parallel do default(shared)
   !$acc parallel loop
   do j=jsvf-1,jevf+1 ; do I=isvf-2,ievf+1
@@ -1184,20 +1197,21 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   enddo ; enddo
   !$acc end parallel 
 
-  print *,"BMJ Loop 1146 2nd loop in region"
   !$OMP parallel do default(shared)
   !$acc parallel loop
   do J=jsvf-2,jevf+1 ; do i=isvf-1,ievf+1
     vbt(i,J) = 0.0 ; vhbt(i,J) = 0.0 ; v_accel_bt(i,J) = 0.0
   enddo ; enddo
   !$acc end parallel 
-
+ 
+  !Loop with dependency flag
   !$OMP parallel do default(shared)
   !!$acc loop
   do j=js,je ; do k=1,nz ; do I=is-1,ie
     ubt(I,j) = ubt(I,j) + wt_u(I,j,k) * U_in(I,j,k)
   enddo ; enddo ; enddo 
-  print *, "1192 Parallel region" 
+
+  !Loop with dependency flag 
   !$OMP parallel do default(shared)
   !!$acc loop
   do J=js-1,je ; do k=1,nz ; do i=is,ie
@@ -1210,8 +1224,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     if (abs(ubt(I,j)) < CS%vel_underflow) ubt(I,j) = 0.0
   enddo ; enddo
   !$acc end parallel
- 
-  print *,"1205 parallel region"  
+   
   !$OMP parallel do default(shared)
   !$acc parallel loop
   do J=js-1,je ; do i=is,ie
@@ -1244,7 +1257,6 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     if (id_clock_calc_pre > 0) call cpu_clock_end(id_clock_calc_pre)
     if (id_clock_pass_pre > 0) call cpu_clock_begin(id_clock_pass_pre)
     tmp_u(:,:) = 0.0 ; tmp_v(:,:) = 0.0
-    print *, "BMJ Loop '1155'"
     !$acc parallel
     !$acc loop
     do j=js,je ; do I=Isq,Ieq ; tmp_u(I,j) = BT_force_u(I,j) ; enddo ; enddo  
@@ -1255,7 +1267,6 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       call start_group_pass(CS%pass_tmp_uv, G%Domain)
     else
       call do_group_pass(CS%pass_tmp_uv, G%Domain)
-      print *, "Inner Loop 1155"
       !$acc parallel loop
       do j=jsd,jed ; do I=IsdB,IedB ; BT_force_u(I,j) = tmp_u(I,j) ; enddo ; enddo
       !$acc end parallel 
@@ -1277,29 +1288,8 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   endif
 
   ! Determine the weighted Coriolis parameters for the neighboring velocities.
- ! 
- ! !$OMP parallel do default(shared)
- ! do J=jsvf-1,jevf ; do i=isvf-1,ievf+1
- !   if (CS%Sadourny) then
- !     amer(I-1,j) = DCor_u(I-1,j) * q(I-1,J)
- !     bmer(I,j) = DCor_u(I,j) * q(I,J)
- !     cmer(I,j+1) = DCor_u(I,j+1) * q(I,J)
- !     dmer(I-1,j+1) = DCor_u(I-1,j+1) * q(I-1,J)
- !   else
- !     amer(I-1,j) = DCor_u(I-1,j) * &
- !                   ((q(I,J) + q(I-1,J-1)) + q(I-1,J)) / 3.0
- !     bmer(I,j) = DCor_u(I,j) * &
- !                 (q(I,J) + (q(I-1,J) + q(I,J-1))) / 3.0
- !     cmer(I,j+1) = DCor_u(I,j+1) * &
- !                   (q(I,J) + (q(I-1,J) + q(I,J+1))) / 3.0
- !     dmer(I-1,j+1) = DCor_u(I-1,j+1) * &
- !                     ((q(I,J) + q(I-1,J+1)) + q(I-1,J)) / 3.0
- !   endif
- ! enddo ; enddo
- 
    !$OMP parallel do default(shared)
    if (CS%Sadourny) then
-     print *, "If out of Loop 1 if"
      !$acc parallel loop
      do J=jsvf-1,jevf ; do i=isvf-1,ievf+1
        amer(I-1,j) = DCor_u(I-1,j) * q(I-1,J)
@@ -1309,7 +1299,6 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
      enddo; enddo
      !$acc end parallel 
     else
-     print *,"If out of Loop 1 else"
      !$acc parallel loop
      do J=jsvf-1,jevf ; do i=isvf-1,ievf+1
        amer(I-1,j) = DCor_u(I-1,j) * &
@@ -1323,30 +1312,10 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       enddo ; enddo
       !$acc end parallel
    endif
-!  Origonal Loop 2 before moving If out of Loop 
-!  !$OMP parallel do default(shared)
-!  do j=jsvf-1,jevf+1 ; do I=isvf-1,ievf
-!    if (CS%Sadourny) then
-!      azon(I,j) = DCor_v(i+1,J) * q(I,J)
-!      bzon(I,j) = DCor_v(i,J) * q(I,J)
-!      czon(I,j) = DCor_v(i,J-1) * q(I,J-1)
-!      dzon(I,j) = DCor_v(i+1,J-1) * q(I,J-1)
-!    else
-!      azon(I,j) = DCor_v(i+1,J) * &
-!                  (q(I,J) + (q(I+1,J) + q(I,J-1))) / 3.0
-!      bzon(I,j) = DCor_v(i,J) * &
-!                  (q(I,J) + (q(I-1,J) + q(I,J-1))) / 3.0
-!      czon(I,j) = DCor_v(i,J-1) * &
-!                  ((q(I,J) + q(I-1,J-1)) + q(I,J-1)) / 3.0
-!      dzon(I,j) = DCor_v(i+1,J-1) * &
-!                  ((q(I,J) + q(I+1,J-1)) + q(I,J-1)) / 3.0
-!    endif
-!  enddo ; enddo
 
   !BJames Rearanged to move If out of Loop
   !$OMP parallel do default(shared)
   if (CS%Sadourny) then
-    print *, "If out of Loop 2 if"
     !$acc parallel loop
     do j=jsvf-1,jevf+1 ; do I=isvf-1,ievf
       azon(I,j) = DCor_v(i+1,J) * q(I,J)
@@ -1356,7 +1325,6 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     enddo; enddo 
     !$acc end parallel
   else
-    print *, "If out of Loop 2 else"
     !$acc parallel loop
     do j=jsvf-1,jevf+1 ; do I=isvf-1,ievf
 
@@ -1398,7 +1366,6 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     if (CS%va_polarity(i,j) < 0.0) call swap(gtot_N(i,j), gtot_S(i,j))
   enddo ; enddo
   
-  print *, "Loop 1392 = 1248"
   !$OMP parallel do default(shared)
   !$acc parallel loop 
   do j=js,je ; do I=is-1,ie
@@ -1449,7 +1416,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     av_rem_v(i,J) = av_rem_v(i,J) + CS%frhatv(i,J,k) * visc_rem_v(i,J,k)
   enddo ; enddo ; enddo
   if (CS%strong_drag) then
-    print *, "Loop 1443 = 1291" 
+    !print *, "Loop 1443 = 1291" 
     !BJames FIX THIS
     !$OMP do
     !!$acc parallel
@@ -1467,7 +1434,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     enddo ; enddo 
     !!$acc end parallel
   else
-    print *, "Loop 1460 else"
+    !print *, "Loop 1460 else"
     !$OMP do
     !!$acc parallel 
     !!$acc loop
@@ -1508,7 +1475,6 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
 
   ! Zero out the arrays for various time-averaged quantities.
   if (find_etaav) then
-    print *, "Loop 1494 = 1337"
     !$OMP do
     !$acc parallel loop
     do j=jsvf-1,jevf+1 ; do i=isvf-1,ievf+1
@@ -1524,7 +1490,6 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     !$acc end parallel
    endif
   
-  print *, "Loop 1512 = 1350"
   !$OMP do
   !$acc parallel
   !$acc loop
@@ -1573,8 +1538,9 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     if (abs(CS%eta_cor(i,j)) > dt*CS%eta_cor_bound(i,j)) &
       CS%eta_cor(i,j) = sign(dt*CS%eta_cor_bound(i,j), CS%eta_cor(i,j))
   enddo ; enddo ; endif ; endif
+  
+  !FIX THIS, Control Structure issue
   !$OMP do
-  !print *,"Loop 1565 "
   !!$acc parallel loop
   do j=js,je ; do i=is,ie
     eta_src(i,j) = G%mask2dT(i,j) * (Instep * CS%eta_cor(i,j))
@@ -1590,7 +1556,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       call BT_cont_to_face_areas(BT_cont, Datu, Datv, G, US, MS, 0, .true.)
     if (ice_is_rigid) then
       !$OMP parallel do default(shared) private(Idt_max2,H_eff_dx2,dyn_coef_max,ice_strength)
-      print *, "Massive Loop 1581 with G%"
+      !print *, "Massive Loop 1581 with G%"
       !Loop not called under current configuration
       !!$acc parallel loop
       do j=js,je ; do i=is,ie
@@ -1792,20 +1758,24 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     if (CS%dynamic_psurf .or. .not.project_velocity) then
       if (use_BT_cont) then 
         !GOMP do
+        !$acc parallel loop
         do j=jsv-1,jev+1 ; do I=isv-2,iev+1
           uhbt(I,j) = find_uhbt(ubt(I,j), BTCL_u(I,j), US) + uhbt0(I,j)
         enddo ; enddo
+        !$acc end parallel
         !GOMP do
+        !$acc parallel loop
         do J=jsv-2,jev+1 ; do i=isv-1,iev+1
           vhbt(i,J) = find_vhbt(vbt(i,J), BTCL_v(i,J), US) + vhbt0(i,J)
         enddo ; enddo
+        !$acc end parallel
         !GOMP do
         do j=jsv-1,jev+1 ; do i=isv-1,iev+1
           eta_pred(i,j) = (eta(i,j) + eta_src(i,j)) + (dtbt * CS%IareaT(i,j)) * &
                      ((uhbt(I-1,j) - uhbt(I,j)) + (vhbt(i,J-1) - vhbt(i,J)))
         enddo ; enddo
       else
-        print *, "Loop 1805 else statement"
+        !Loop with dependency flag
         !GOMP do
         !!$acc parallel loop
         do j=jsv-1,jev+1 ; do i=isv-1,iev+1
@@ -1819,7 +1789,6 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       endif
 
       if (CS%dynamic_psurf) then
-        print *, "Loop 1820"
         !GOMP do
         !$acc parallel loop
         do j=jsv-1,jev+1 ; do i=isv-1,iev+1
@@ -1843,7 +1812,6 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
 
     if (interp_eta_PF) then
       wt_end = n*Instep  ! This could be (n-0.5)*Instep.
-      print *, "Loop 1842"
       !GOMP do
       !$acc parallel loop
       do j=jsv-1,jev+1 ; do i=isv-1,iev+1
@@ -1853,7 +1821,6 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     endif
 
     if (apply_OBC_flather .or. apply_OBC_open) then
-      print *, "Loop 1852"
       !GOMP do
       !$acc parallel 
       !$acc loop
@@ -1877,7 +1844,6 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       endif
 
       if (CS%BT_OBC%apply_u_OBCs) then  ! save the old value of ubt and uhbt
-        print *, "Loop 1876"
         !GOMP parallel do default(shared)
         !$acc parallel loop
         do J=jsv-joff,jev+joff ; do i=isv-1,iev
@@ -1888,7 +1854,6 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       endif
 
       if (CS%BT_OBC%apply_v_OBCs) then  ! save the old value of vbt and vhbt
-        print *, "Loop 1890"
         !GOMP parallel do default(shared)
         !$acc parallel loop
         do J=jsv-1,jev ; do i=isv-ioff,iev+ioff
@@ -1926,7 +1891,6 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         endif ; enddo ; enddo
         !$acc end parallel
       endif
-      print *,"Loop 1921"
       !GOMP do
       !$acc parallel loop
       do J=jsv-1,jev ; do i=isv-1,iev+1
@@ -1989,9 +1953,10 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
           PFu(I,j) = 0.0
         endif ; enddo ; enddo
       endif
-      print *, "Loop 1986"
+      !print *, "Loop 1986"
+      !Openacc: Dependence in if/else statements causing divergence
       !GOMP do
-      !$acc parallel loop
+      !!$acc parallel loop
       do j=jsv,jev ; do I=isv-1,iev
         vel_prev = ubt(I,j)
         ubt(I,j) = bt_rem_u(I,j) * (ubt(I,j) + &
@@ -2006,13 +1971,15 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
           u_accel_bt(I,j) = u_accel_bt(I,j) + wt_accel(n) * (Cor_u(I,j) + PFu(I,j))
         endif
       enddo ; enddo
-      !$acc end parallel
+      !!$acc end parallel
 
       if (use_BT_cont) then
         !GOMP do
+        !$acc parallel loop
         do j=jsv,jev ; do I=isv-1,iev
           uhbt(I,j) = find_uhbt(ubt_trans(I,j), BTCL_u(I,j), US) + uhbt0(I,j)
         enddo ; enddo
+        !$acc end parallel
       else
         !GOMP do
         !$acc parallel loop
@@ -2022,7 +1989,6 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         !$acc end parallel
       endif
      if (CS%BT_OBC%apply_u_OBCs) then  ! copy back the value for u-points on the boundary.
-        print *, "Loop 2021"
         !GOMP do
         !$acc parallel loop
         do j=jsv,jev ; do I=isv-1,iev ; if (OBC%segnum_u(I,j) /= OBC_NONE) then
@@ -2056,7 +2022,6 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         endif ; enddo ; enddo
       endif
 
-      print *, "Loop 2055"
       !GOMP do
       !$acc parallel loop
       do j=jsv-1,jev+1 ; do I=isv-1,iev
@@ -2090,7 +2055,6 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         !$acc end parallel
       endif
       if (CS%BT_OBC%apply_u_OBCs) then  ! copy back the value for u-points on the boundary.
-        print *, "Loop 2090"
         !GOMP do
         !$acc parallel loop
         do j=jsv-1,jev+1 ; do I=isv-1,iev ; if (OBC%segnum_u(I,j) /= OBC_NONE) then
@@ -2136,7 +2100,6 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         !$acc end parallel
       endif
 
-      print *, "Loop 2127"
       !GOMP do
       !$acc parallel loop
       do J=jsv-1,jev ; do i=isv,iev
@@ -3287,6 +3250,7 @@ end subroutine btcalc
 
 !> The function find_uhbt determines the zonal transport for a given velocity.
 function find_uhbt(u, BTC, US) result(uhbt)
+!$acc routine seq
   real, intent(in) :: u    !< The local zonal velocity [L T-1 ~> m s-1]
   type(local_BT_cont_u_type), intent(in) :: BTC !< A structure containing various fields that
                            !! allow the barotropic transports to be calculated consistently
@@ -3405,6 +3369,7 @@ end function uhbt_to_ubt
 
 !> The function find_vhbt determines the meridional transport for a given velocity.
 function find_vhbt(v, BTC, US) result(vhbt)
+  !$acc routine seq
   real, intent(in) :: v    !< The local meridional velocity [L T-1 ~> m s-1]
   type(local_BT_cont_v_type), intent(in) :: BTC !< A structure containing various fields that
                            !! allow the barotropic transports to be calculated consistently
