@@ -853,7 +853,8 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
 
   ! Zero out various wide-halo arrays.
   !$OMP parallel do default(shared)
-  !$acc parallel loop
+  !Issue: Executes Seq !Issue: copy CS seq
+  !!$acc parallel loop
   do j=CS%jsdw,CS%jedw ; do i=CS%isdw,CS%iedw
     gtot_E(i,j) = 0.0 ; gtot_W(i,j) = 0.0
     gtot_N(i,j) = 0.0 ; gtot_S(i,j) = 0.0
@@ -865,37 +866,39 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     p_surf_dyn(i,j) = 0.0
     if (CS%dynamic_psurf) dyn_coef_eta(i,j) = 0.0
   enddo ; enddo
-  !$acc end parallel 
+  !!$acc end parallel 
 
   !   The halo regions of various arrays need to be initialized to
   ! non-NaNs in case the neighboring domains are not part of the ocean.
   ! Otherwise a halo update later on fills in the correct values.
+  !Issue: copy CS seq
   !$OMP parallel do default(shared)
-  !$acc parallel loop
+  !!$acc parallel loop
   do j=CS%jsdw,CS%jedw ; do I=CS%isdw-1,CS%iedw
     Cor_ref_u(I,j) = 0.0 ; BT_force_u(I,j) = 0.0 ; ubt(I,j) = 0.0
     Datu(I,j) = 0.0 ; bt_rem_u(I,j) = 0.0 ; uhbt0(I,j) = 0.0
   enddo ; enddo
-  !$acc end parallel 
+  !!$acc end parallel 
 
   !$OMP parallel do default(shared)
-  !$acc parallel loop
+  !!$acc parallel loop
   do J=CS%jsdw-1,CS%jedw ; do i=CS%isdw,CS%iedw
     Cor_ref_v(i,J) = 0.0 ; BT_force_v(i,J) = 0.0 ; vbt(i,J) = 0.0
     Datv(i,J) = 0.0 ; bt_rem_v(i,J) = 0.0 ; vhbt0(I,j) = 0.0
   enddo ; enddo
-  !$acc end parallel
+  !!$acc end parallel
 
   ! Copy input arrays into their wide-halo counterparts.
   if (interp_eta_PF) then
     !$OMP parallel do default(shared) 
-    !$acc parallel loop
+    !Issue: Executes Seq
+    !!$acc parallel loop
     do j=G%jsd,G%jed ; do i=G%isd,G%ied ! Was "do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1" but doing so breaks OBC. Not sure why?
       eta(i,j) = eta_in(i,j)
       eta_PF_1(i,j) = eta_PF_start(i,j)
       d_eta_PF(i,j) = eta_PF_in(i,j) - eta_PF_start(i,j)
     enddo ; enddo
-    !$acc end parallel
+    !!$acc end parallel
   else
     !$OMP parallel do default(shared)
     !$acc parallel loop
@@ -943,17 +946,17 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   !$OMP parallel do default(shared)
   !$acc end parallel
 
-  !$acc parallel loop
+  !!$acc parallel loop
   do j=js,je ; do k=1,nz ; do I=is-1,ie
     ubt_Cor(I,j) = ubt_Cor(I,j) + wt_u(I,j,k) * U_Cor(I,j,k)
   enddo ; enddo ; enddo
-  !$acc end parallel 
+  !!$acc end parallel 
   !$OMP parallel do default(shared)
-  !$acc parallel loop
+  !!$acc parallel loop
   do J=js-1,je ; do k=1,nz ; do i=is,ie
     vbt_Cor(i,J) = vbt_Cor(i,J) + wt_v(i,J,k) * V_Cor(i,J,k)
   enddo ; enddo ; enddo
-  !$acc end parallel
+  !!$acc end parallel
   
   ! The gtot arrays are the effective layer-weighted reduced gravities for
   ! accelerations across the various faces, with names for the relative
@@ -962,25 +965,25 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   !$OMP parallel do default(shared)
  
   !Loop with dependency flag
-  !$acc parallel loop 
+  !!$acc parallel loop 
   do j=js,je
     do k=1,nz ; do I=is-1,ie
       gtot_E(i,j)   = gtot_E(i,j)   + pbce(i,j,k)   * wt_u(I,j,k)
       gtot_W(i+1,j) = gtot_W(i+1,j) + pbce(i+1,j,k) * wt_u(I,j,k)
     enddo ; enddo
   enddo
-  !$acc end parallel 
+  !!$acc end parallel 
 
   !Loop with dependency flag
   !$OMP parallel do default(shared)
-  !$acc parallel loop  
+  !!$acc parallel loop  
   do J=js-1,je
     do k=1,nz ; do i=is,ie
       gtot_N(i,j)   = gtot_N(i,j)   + pbce(i,j,k)   * wt_v(i,J,k)
       gtot_S(i,j+1) = gtot_S(i,j+1) + pbce(i,j+1,k) * wt_v(i,J,k)
     enddo ; enddo
   enddo
-  !$acc end parallel
+  !!$acc end parallel
 
 
   if (CS%tides) then
@@ -1053,19 +1056,19 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
 
   !Loop with dependency flag
   !$OMP parallel do default(shared)
-  !$acc parallel loop 
+  !!$acc parallel loop 
   do j=js,je ; do k=1,nz ; do I=Isq,Ieq
     BT_force_u(I,j) = BT_force_u(I,j) + wt_u(I,j,k) * bc_accel_u(I,j,k)
   enddo ; enddo ; enddo
-  !$acc end parallel 
+  !!$acc end parallel 
 
   !Loop with dependency flag
   !$OMP parallel do default(shared)
-  !$acc parallel loop
+  !!$acc parallel loop
   do J=Jsq,Jeq ; do k=1,nz ; do i=is,ie
     BT_force_v(i,J) = BT_force_v(i,J) + wt_v(i,J,k) * bc_accel_v(i,J,k)
   enddo ; enddo ; enddo
-  !$acc end parallel
+  !!$acc end parallel
 
   ! Determine the difference between the sum of the layer fluxes and the
   ! barotropic fluxes found from the same input velocities.
@@ -1219,18 +1222,20 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   enddo ; enddo ;  enddo
  
   !$OMP parallel do default(shared)
-  !$acc parallel loop
+  !Issue: copy CS seq
+  !!$acc parallel loop
   do j=js,je ; do I=is-1,ie
     if (abs(ubt(I,j)) < CS%vel_underflow) ubt(I,j) = 0.0
   enddo ; enddo
-  !$acc end parallel
+  !!$acc end parallel
    
   !$OMP parallel do default(shared)
-  !$acc parallel loop
+  !Issue: copy CS seq
+  !!$acc parallel loop
   do J=js-1,je ; do i=is,ie
     if (abs(vbt(i,J)) < CS%vel_underflow) vbt(i,J) = 0.0
   enddo ; enddo
-  !$acc end parallel
+  !!$acc end parallel
 
   if (apply_OBCs) then
     ubt_first(:,:) = ubt(:,:) ; vbt_first(:,:) = vbt(:,:)
@@ -1892,7 +1897,8 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         !$acc end parallel
       endif
       !GOMP do
-      !$acc parallel loop
+      !Issue: copy CS seq
+      !!$acc parallel loop
       do J=jsv-1,jev ; do i=isv-1,iev+1
         vel_prev = vbt(i,J)
         vbt(i,J) = bt_rem_v(i,J) * (vbt(i,J) + &
@@ -1906,7 +1912,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
           v_accel_bt(I,j) = v_accel_bt(I,j) + wt_accel(n) * (Cor_v(i,J) + PFv(i,J))
         endif
       enddo ; enddo
-      !$acc end parallel
+      !!$acc end parallel
 
       if (use_BT_cont) then
         !GOMP do
@@ -2022,8 +2028,9 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         endif ; enddo ; enddo
       endif
 
+      !Issue: copy CS seq
       !GOMP do
-      !$acc parallel loop
+      !!$acc parallel loop
       do j=jsv-1,jev+1 ; do I=isv-1,iev
         vel_prev = ubt(I,j)
         ubt(I,j) = bt_rem_u(I,j) * (ubt(I,j) + &
@@ -2038,7 +2045,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
           u_accel_bt(I,j) = u_accel_bt(I,j) + wt_accel(n) * (Cor_u(I,j) + PFu(I,j))
         endif
       enddo ; enddo
-      !$acc end parallel
+      !!$acc end parallel
 
       if (use_BT_cont) then
         !GOMP do
@@ -2100,8 +2107,9 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         !$acc end parallel
       endif
 
+      !Issue: copy CS seq
       !GOMP do
-      !$acc parallel loop
+      !!$acc parallel loop
       do J=jsv-1,jev ; do i=isv,iev
         vel_prev = vbt(i,J)
         vbt(i,J) = bt_rem_v(i,J) * (vbt(i,J) + &
@@ -2116,7 +2124,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
           v_accel_bt(I,j) = v_accel_bt(I,j) + wt_accel(n) * (Cor_v(i,J) + PFv(i,J))
         endif
       enddo ; enddo 
-      !$acc end parallel 
+      !!$acc end parallel 
 
       if (use_BT_cont) then
         !GOMP do
