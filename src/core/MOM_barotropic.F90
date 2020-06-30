@@ -643,10 +643,93 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   integer :: isd, ied, jsd, jed, IsdB, IedB, JsdB, JedB
   integer :: ioff, joff
   
-  !Temporary Arrays for GPU porting 
-  !Naming: use _gpu for these temps ex: "CS_q_gpu"
-  real, dimension (NIMEMB_PTR_,NJMEM_,NKMEM_):: CS_frhatu_gpu
+  !_________________Temporary Arrays for GPU porting_________________________ 
+  !Temp variables for loop evaluation
+  real :: CS_vel_underflow_gpu
+  logical:: CS_linear_wave_drag_gpu 
 
+  !Naming: use structure_var_gpu for these temps ex: CS%q => CS_q_gpu  
+  real, allocatable, dimension (:,:,:):: CS_frhatu_gpu
+  real, allocatable, dimension (:,:)::& 
+       G_mask2dCu_gpu,G_mask2dCv_gpu,G_mask2dT_gpu 
+  real, allocatable, dimension (:,:)::&
+      CS_q_D_gpu,CS_D_u_Cor_gpu,CS_D_v_Cor_gpu,&
+      CS_eta_cor_gpu,CS_IareaT_gpu,CS_IdxCu_gpu,&
+      CS_IDatu_gpu, CS_IDatv_gpu
+  
+  !Single variable workaround definitions 
+  CS_vel_underflow_gpu = CS%vel_underflow
+  CS_linear_wave_drag_gpu = CS%linear_wave_drag 
+  
+  !allocate a temporary array (workaround for structures) 
+  allocate(CS_frhatu_gpu(size(CS%frhatu,1),size(CS%frhatu,2),size(CS%frhatu, 3)))
+  allocate(G_mask2dCu_gpu(size(G%mask2dCu,1),size(G%mask2dCu,2)))
+  allocate(G_mask2dCv_gpu(size(G%mask2dCv,1),size(G%mask2dCv,2)))
+  allocate(G_mask2dT_gpu(size(G%mask2dT,1),size(G%mask2dT,2)))
+  allocate(CS_q_D_gpu(size(CS%q_D,1),size(CS%q_D,2)))
+  allocate(CS_D_u_Cor_gpu(size(CS%D_u_Cor,1),size(CS%D_u_Cor,2)))
+  allocate(CS_D_v_Cor_gpu(size(CS%D_v_Cor,1),size(CS%D_v_Cor,2)))
+  allocate(CS_eta_cor_gpu(size(CS%eta_cor,1),size(CS%eta_cor,2)))
+  allocate(CS_IareaT_gpu(size(CS%IareaT,1),size(CS%IareaT,2)))
+  allocate(CS_IdxCu_gpu(size(CS%IdxCu,1),size(CS%IdxCu,2)))
+  allocate(CS_IDatu_gpu(size(CS%IDatu,1),size(CS%IDatu,2)))
+  allocate(CS_IDatv_gpu(size(CS%IDatv,1),size(CS%IDatv,2)))
+
+  !print *, "Shape of CS%q_D", shape(CS%q_D)
+  !print *, "Shape of CS_q_D_gpu", shape(CS_q_D_gpu) 
+  
+  !Copy data to the temporary array
+  !index using dimension size coordinants
+  do i=1,size(CS%frhatu, 1); do j=1,size(CS%frhatu,2) ; do k=1,size(CS%frhatu,3)
+    CS_frhatu_gpu(i,j,k) = CS%frhatu(i,j,k)  
+  enddo; enddo; enddo  
+
+  do i=1, size(G%mask2dCu, 1); do j=1, size(G%mask2dCu, 2)
+    G_mask2dCu_gpu(i,j) = G%mask2dCu(i,j) 
+  enddo; enddo 
+
+  do i=1, size(G%mask2dCv, 1); do j=1, size(G%mask2dCv, 2)
+    G_mask2dCv_gpu(i,j) = G%mask2dCv(i,j)
+  enddo; enddo
+
+  do i=1, size(G%mask2dT, 1); do j=1, size(G%mask2dT, 2)
+    G_mask2dT_gpu(i,j) = G%mask2dT(i,j)
+  enddo; enddo
+
+  do i=1, size(CS%q_D, 1); do j=1, size(CS%q_D, 2)
+    CS_q_D_gpu(i,j) = CS%q_D(i,j)
+  enddo; enddo
+
+  do i=1, size(CS%D_u_Cor, 1); do j=1, size(CS%D_u_Cor, 2)
+    CS_D_u_Cor_gpu(i,j) = CS%D_u_Cor(i,j)
+  enddo; enddo
+
+  do i=1, size(CS%D_v_Cor, 1); do j=1, size(CS%D_v_Cor, 2)
+    CS_D_v_Cor_gpu(i,j) = CS%D_v_Cor(i,j)
+  enddo; enddo
+
+  do i=1, size(CS%eta_cor, 1); do j=1, size(CS%eta_cor, 2)
+    CS_eta_cor_gpu(i,j) = CS%eta_cor(i,j)
+  enddo; enddo
+  
+  do i=1, size(CS%IareaT, 1); do j=1, size(CS%IareaT, 2)
+    CS_IareaT_gpu(i,j) = CS%IareaT(i,j)
+  enddo; enddo
+
+  do i=1, size(CS%IdxCu, 1); do j=1, size(CS%IdxCu, 2)
+    CS_IdxCu_gpu(i,j) = CS%IdxCu(i,j)
+  enddo; enddo
+
+  do i=1, size(CS%IDatu, 1); do j=1, size(CS%IDatu, 2)
+    CS_IDatu_gpu(i,j) = CS%IDatu(i,j)
+  enddo; enddo
+
+  do i=1, size(CS%IDatv, 1); do j=1, size(CS%IDatv, 2)
+    CS_IDatv_gpu(i,j) = CS%IDatv(i,j)
+  enddo; enddo
+
+
+!____________________End of Temp Arrays______________________________
 
   if (.not.associated(CS)) call MOM_error(FATAL, &
       "btstep: Module MOM_barotropic must be initialized before it is used.")
@@ -807,18 +890,28 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
 ! the halo update that needs to be completed before the next calculations.
   if (CS%linearized_BT_PV) then
     !$OMP parallel do default(shared)
+    !$acc parallel loop 
     do J=jsvf-2,jevf+1 ; do I=isvf-2,ievf+1
-      q(I,J) = CS%q_D(I,j)
+      !q(I,J) = CS%q_D(I,j)
+      q(I,J) = CS_q_D_gpu(I,j)
     enddo ; enddo
+    !$acc end parallel
+    
     !$OMP parallel do default(shared)
+    !$acc parallel loop 
     do j=jsvf-1,jevf+1 ; do I=isvf-2,ievf+1
-      DCor_u(I,j) = CS%D_u_Cor(I,j)
+      DCor_u(I,j) = CS_D_u_Cor_gpu(I,j)
     enddo ; enddo
+    !$acc end parallel
+    
     !$OMP parallel do default(shared)
+    !$acc parallel loop collapse(2)
     do J=jsvf-2,jevf+1 ; do i=isvf-1,ievf+1
-      DCor_v(i,J) = CS%D_v_Cor(i,J)
+      DCor_v(i,J) = CS_D_v_Cor_gpu(i,J)
     enddo ; enddo
-  else
+    !$acc end parallel
+ 
+   else
     q(:,:) = 0.0 ; DCor_u(:,:) = 0.0 ; DCor_v(:,:) = 0.0
     !  This option has not yet been written properly.
     !  ### bathyT here should be replaced with bathyT+eta(Bous) or eta(non-Bous).
@@ -941,18 +1034,19 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   !$acc end parallel
 
   !$OMP parallel do default(shared)
-  !$acc parallel loop
+  !$acc parallel loop collapse(2)
   do J=js-1,je ; do i=is-1,ie+1 ; vbt_Cor(i,J) = 0.0 ; enddo ; enddo
   !$OMP parallel do default(shared)
   !$acc end parallel
 
-  !!$acc parallel loop
+  !Loop has dependency flag
+  !!$acc parallel loop collapse(2)
   do j=js,je ; do k=1,nz ; do I=is-1,ie
     ubt_Cor(I,j) = ubt_Cor(I,j) + wt_u(I,j,k) * U_Cor(I,j,k)
   enddo ; enddo ; enddo
   !!$acc end parallel 
   !$OMP parallel do default(shared)
-  !!$acc parallel loop
+  !!$acc parallel loop collapse(2)
   do J=js-1,je ; do k=1,nz ; do i=is,ie
     vbt_Cor(i,J) = vbt_Cor(i,J) + wt_v(i,J,k) * V_Cor(i,J,k)
   enddo ; enddo ; enddo
@@ -964,8 +1058,8 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   ! updated later on.
   !$OMP parallel do default(shared)
  
-  !Loop with dependency flag
-  !!$acc parallel loop 
+  !Loop causes job to run without completing
+  !!$acc parallel loop collapse(2)
   do j=js,je
     do k=1,nz ; do I=is-1,ie
       gtot_E(i,j)   = gtot_E(i,j)   + pbce(i,j,k)   * wt_u(I,j,k)
@@ -974,9 +1068,8 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   enddo
   !!$acc end parallel 
 
-  !Loop with dependency flag
   !$OMP parallel do default(shared)
-  !!$acc parallel loop  
+  !!$acc parallel loop collapse(2)  
   do J=js-1,je
     do k=1,nz ; do i=is,ie
       gtot_N(i,j)   = gtot_N(i,j)   + pbce(i,j,k)   * wt_v(i,J,k)
@@ -1040,31 +1133,36 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   enddo ; enddo
   if (present(taux_bot) .and. present(tauy_bot)) then
     if (associated(taux_bot) .and. associated(tauy_bot)) then
-      !$OMP parallel do default(shared)
+      !$OMP parallel do default(shared) 
+      !$acc parallel
+      !$acc loop collapse(2)
       do j=js,je ; do I=is-1,ie
-        BT_force_u(I,j) = BT_force_u(I,j) - taux_bot(I,j) * mass_to_Z  * CS%IDatu(I,j)
+        BT_force_u(I,j) = BT_force_u(I,j) - taux_bot(I,j) * mass_to_Z  * CS_IDatu_gpu(I,j)
       enddo ; enddo
       !$OMP parallel do default(shared)
+      !$acc loop collapse(2)
       do J=js-1,je ; do i=is,ie
-        BT_force_v(i,J) = BT_force_v(i,J) - tauy_bot(i,J) * mass_to_Z  * CS%IDatv(i,J)
+        BT_force_v(i,J) = BT_force_v(i,J) - tauy_bot(i,J) * mass_to_Z  * CS_IDatv_gpu(i,J)
       enddo ; enddo
+      !$acc end parallel
     endif
   endif
 
   ! bc_accel_u & bc_accel_v are only available on the potentially
   ! non-symmetric computational domain.
 
-  !Loop with dependency flag
+  !print *, "Loop 1556  j = ", je-js, "i=", ie-is-1, "k= ", nz-1
+  !Loop with dependency flag; results in memory leak!
   !$OMP parallel do default(shared)
-  !!$acc parallel loop 
+  !!$acc parallel loop collapse(3)  
   do j=js,je ; do k=1,nz ; do I=Isq,Ieq
     BT_force_u(I,j) = BT_force_u(I,j) + wt_u(I,j,k) * bc_accel_u(I,j,k)
   enddo ; enddo ; enddo
   !!$acc end parallel 
 
-  !Loop with dependency flag
+  !Loop with dependency flag; results in memory leak!
   !$OMP parallel do default(shared)
-  !!$acc parallel loop
+  !!$acc parallel loop collapse(3)
   do J=Jsq,Jeq ; do k=1,nz ; do i=is,ie
     BT_force_v(i,J) = BT_force_v(i,J) + wt_v(i,J,k) * bc_accel_v(i,J,k)
   enddo ; enddo ; enddo
@@ -1100,23 +1198,15 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       enddo ; enddo ; enddo
       !!$acc end parallel
     else
-      !!print *,"BMJ Loop 1069"
-      !print *, "size of NIMEMB_PTR_",NIMEMB_PTR_
-      !print *, "size of  NJMEM_",NJMEM_
-      !print *, "size of NKMEM ", NKMEM_
-      !print *, "shape of CS_frhatu_gpu ", shape(CS_frhatu_gpu)
-      !print *, "shape of CS%frhatu ", shape(CS%frhatu)
-
-      !CS_frhatu_gpu = CS%frhatu !Array from CS for gpu
-      
       !$OMP parallel do default(shared)
-      !!$acc parallel loop 
+      !Loop with dependency flag, executes sequentially. Uses CS temp array
+      !$acc parallel loop
       do j=js,je ; do k=1,nz ; do I=is-1,ie
         uhbt(I,j) = uhbt(I,j) + uh0(I,j,k)
-        ubt(I,j) = ubt(I,j) + CS%frhatu(I,j,k) * u_uh0(I,j,k)
-        !ubt(I,j) = ubt(I,j) + CS_frhatu_gpu(I,j,k) * u_uh0(I,j,k)
+        !ubt(I,j) = ubt(I,j) + CS%frhatu(I,j,k) * u_uh0(I,j,k)
+        ubt(I,j) = ubt(I,j) + CS_frhatu_gpu(I,j,k) * u_uh0(I,j,k)
       enddo ; enddo ; enddo
-      !!$acc end parallel  
+      !$acc end parallel  
 
       !$OMP parallel do default(shared)
 
@@ -1209,10 +1299,11 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
  
   !Loop with dependency flag
   !$OMP parallel do default(shared)
-  !!$acc loop
+  !!$acc parallel loop
   do j=js,je ; do k=1,nz ; do I=is-1,ie
     ubt(I,j) = ubt(I,j) + wt_u(I,j,k) * U_in(I,j,k)
   enddo ; enddo ; enddo 
+  !!$acc end parallel 
 
   !Loop with dependency flag 
   !$OMP parallel do default(shared)
@@ -1223,19 +1314,19 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
  
   !$OMP parallel do default(shared)
   !Issue: copy CS seq
-  !!$acc parallel loop
+  !$acc parallel loop
   do j=js,je ; do I=is-1,ie
-    if (abs(ubt(I,j)) < CS%vel_underflow) ubt(I,j) = 0.0
+    if (abs(ubt(I,j)) < CS_vel_underflow_gpu) ubt(I,j) = 0.0
   enddo ; enddo
-  !!$acc end parallel
+  !$acc end parallel
    
   !$OMP parallel do default(shared)
   !Issue: copy CS seq
-  !!$acc parallel loop
+  !$acc parallel loop
   do J=js-1,je ; do i=is,ie
-    if (abs(vbt(i,J)) < CS%vel_underflow) vbt(i,J) = 0.0
+    if (abs(vbt(i,J)) < CS_vel_underflow_gpu) vbt(i,J) = 0.0
   enddo ; enddo
-  !!$acc end parallel
+  !$acc end parallel
 
   if (apply_OBCs) then
     ubt_first(:,:) = ubt(:,:) ; vbt_first(:,:) = vbt(:,:)
@@ -1304,7 +1395,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
      enddo; enddo
      !$acc end parallel 
     else
-     !$acc parallel loop
+     !$acc parallel loop private(q)
      do J=jsvf-1,jevf ; do i=isvf-1,ievf+1
        amer(I-1,j) = DCor_u(I-1,j) * &
                      ((q(I,J) + q(I-1,J-1)) + q(I-1,J)) / 3.0
@@ -1409,53 +1500,63 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
 !$OMP                               use_BT_Cont,BTCL_u,uhbt0,BTCL_v,vhbt0,eta,Idt,US)  &
 !$OMP                       private(u_max_cor,v_max_cor,eta_cor_max,Htot)
   !$OMP do
+  !$acc parallel
+  !$acc loop collapse(2)
   do j=js-1,je+1 ; do I=is-1,ie ; av_rem_u(I,j) = 0.0 ; enddo ; enddo
   !$OMP do
+  !$acc loop collapse(2)
   do J=js-1,je ; do i=is-1,ie+1 ; av_rem_v(i,J) = 0.0 ; enddo ; enddo
+  !$acc end parallel 
+
   !$OMP do
+  !Loop has dependency flag, adds gpu seq execution time
+  !!$acc parallel loop 
   do j=js,je ; do k=1,nz ; do I=is-1,ie
-    av_rem_u(I,j) = av_rem_u(I,j) + CS%frhatu(I,j,k) * visc_rem_u(I,j,k)
+    av_rem_u(I,j) = av_rem_u(I,j) + CS_frhatu_gpu(I,j,k) * visc_rem_u(I,j,k)
   enddo ; enddo ; enddo
+  !!$acc end parallel 
+ 
   !$OMP do
   do J=js-1,je ; do k=1,nz ; do i=is,ie
     av_rem_v(i,J) = av_rem_v(i,J) + CS%frhatv(i,J,k) * visc_rem_v(i,J,k)
   enddo ; enddo ; enddo
+ 
   if (CS%strong_drag) then
-    !print *, "Loop 1443 = 1291" 
-    !BJames FIX THIS
     !$OMP do
-    !!$acc parallel
-    !!$acc loop
-  do j=js,je ; do I=is-1,ie
-      bt_rem_u(I,j) = G%mask2dCu(I,j) * &
+    !Loop utilizes G temp array
+    !$acc parallel
+    !$acc loop
+    do j=js,je ; do I=is-1,ie
+      !bt_rem_u(I,j) = G%mask2dCu(I,j) * &
+         !((nstep * av_rem_u(I,j)) / (1.0 + (nstep-1)*av_rem_u(I,j)))
+       bt_rem_u(I,j) = G_mask2dCu_gpu(I,j) * &
          ((nstep * av_rem_u(I,j)) / (1.0 + (nstep-1)*av_rem_u(I,j)))
     enddo ; enddo
-     
+ 
     !$OMP do
-    !!$acc loop
+    !$acc loop
     do J=js-1,je ; do i=is,ie
-      bt_rem_v(i,J) = G%mask2dCv(i,J) * &
+      bt_rem_v(i,J) = G_mask2dCv_gpu(i,J) * &
          ((nstep * av_rem_v(i,J)) / (1.0 + (nstep-1)*av_rem_v(i,J)))
     enddo ; enddo 
-    !!$acc end parallel
+    !$acc end parallel
   else
-    !print *, "Loop 1460 else"
     !$OMP do
-    !!$acc parallel 
-    !!$acc loop
+    !$acc parallel
+    !$acc loop
     do j=js,je ; do I=is-1,ie
       bt_rem_u(I,j) = 0.0
-      if (G%mask2dCu(I,j) * av_rem_u(I,j) > 0.0) &
-        bt_rem_u(I,j) = G%mask2dCu(I,j) * (av_rem_u(I,j)**Instep)
-    enddo ; enddo
+      if (G_mask2dCu_gpu(I,j) * av_rem_u(I,j) > 0.0) &
+        bt_rem_u(I,j) = G_mask2dCu_gpu(I,j) * (av_rem_u(I,j)**Instep)
+    enddo ; enddo 
     !$OMP do
-    !!$acc loop
+    !$acc loop
     do J=js-1,je ; do i=is,ie
       bt_rem_v(i,J) = 0.0
-      if (G%mask2dCv(i,J) * av_rem_v(i,J) > 0.0) &
-        bt_rem_v(i,J) = G%mask2dCv(i,J) * (av_rem_v(i,J)**Instep)
+      if (G_mask2dCv_gpu(i,J) * av_rem_v(i,J) > 0.0) &
+        bt_rem_v(i,J) = G_mask2dCv_gpu(i,J) * (av_rem_v(i,J)**Instep)
     enddo ; enddo
-    !!$acc end parallel
+    !$acc end parallel
   endif
   if (CS%linear_wave_drag) then
     !$OMP do
@@ -1515,7 +1616,9 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
 
   ! Set the mass source, after first initializing the halos to 0.
   !$OMP do
+  !$acc parallel loop collapse(2)
   do j=jsvf-1,jevf+1; do i=isvf-1,ievf+1 ; eta_src(i,j) = 0.0 ; enddo ; enddo
+  !$acc end parallel
   if (CS%bound_BT_corr) then ; if (use_BT_Cont .and. CS%BT_cont_bounds) then
     do j=js,je ; do i=is,ie ; if (G%mask2dT(i,j) > 0.0) then
       if (CS%eta_cor(i,j) > 0.0) then
@@ -1544,13 +1647,13 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       CS%eta_cor(i,j) = sign(dt*CS%eta_cor_bound(i,j), CS%eta_cor(i,j))
   enddo ; enddo ; endif ; endif
   
-  !FIX THIS, Control Structure issue
+  
   !$OMP do
-  !!$acc parallel loop
+  !$acc parallel loop collapse(2)
   do j=js,je ; do i=is,ie
-    eta_src(i,j) = G%mask2dT(i,j) * (Instep * CS%eta_cor(i,j))
+    eta_src(i,j) = G_mask2dT_gpu(i,j) * (Instep * CS_eta_cor_gpu(i,j))
   enddo ; enddo
-  !!$acc end parallel
+  !$acc end parallel
   !$OMP end parallel
 
   if (CS%dynamic_psurf) then
@@ -1774,23 +1877,25 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
           vhbt(i,J) = find_vhbt(vbt(i,J), BTCL_v(i,J), US) + vhbt0(i,J)
         enddo ; enddo
         !$acc end parallel
+        
         !GOMP do
+        !$acc parallel loop collapse(2)
         do j=jsv-1,jev+1 ; do i=isv-1,iev+1
-          eta_pred(i,j) = (eta(i,j) + eta_src(i,j)) + (dtbt * CS%IareaT(i,j)) * &
+          eta_pred(i,j) = (eta(i,j) + eta_src(i,j)) + (dtbt * CS_IareaT_gpu(i,j)) * &
                      ((uhbt(I-1,j) - uhbt(I,j)) + (vhbt(i,J-1) - vhbt(i,J)))
         enddo ; enddo
-      else
-        !Loop with dependency flag
+        !$acc end parallel 
+      else 
         !GOMP do
-        !!$acc parallel loop
+        !$acc parallel loop collapse(2) 
         do j=jsv-1,jev+1 ; do i=isv-1,iev+1
-          eta_pred(i,j) = (eta(i,j) + eta_src(i,j)) + (dtbt * CS%IareaT(i,j)) * &
+          eta_pred(i,j) = (eta(i,j) + eta_src(i,j)) + (dtbt * CS_IareaT_gpu(i,j)) * &
               (((Datu(I-1,j)*ubt(I-1,j) + uhbt0(I-1,j)) - &
                 (Datu(I,j)*ubt(I,j) + uhbt0(I,j))) + &
                ((Datv(i,J-1)*vbt(i,J-1) + vhbt0(i,J-1)) - &
                 (Datv(i,J)*vbt(i,J) + vhbt0(i,J))))
         enddo ; enddo
-        !!$acc end parallel
+        !$acc end parallel
       endif
 
       if (CS%dynamic_psurf) then
@@ -1897,15 +2002,15 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         !$acc end parallel
       endif
       !GOMP do
-      !Issue: copy CS seq
-      !!$acc parallel loop
+      !Issue: large time hit; need to implement data management
+      !!$acc parallel loop collapse(2)
       do J=jsv-1,jev ; do i=isv-1,iev+1
         vel_prev = vbt(i,J)
         vbt(i,J) = bt_rem_v(i,J) * (vbt(i,J) + &
                     dtbt * ((BT_force_v(i,J) + Cor_v(i,J)) + PFv(i,J)))
         vbt_trans(i,J) = trans_wt1*vbt(i,J) + trans_wt2*vel_prev
 
-        if (CS%linear_wave_drag) then
+        if (CS_linear_wave_drag_gpu) then
           v_accel_bt(I,j) = v_accel_bt(I,j) + wt_accel(n) * &
               ((Cor_v(i,J) + PFv(i,J)) - vbt(i,J)*Rayleigh_v(i,J))
         else
@@ -1916,9 +2021,11 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
 
       if (use_BT_cont) then
         !GOMP do
+        !!$acc parallel loop collapse(2)
         do J=jsv-1,jev ; do i=isv-1,iev+1
           vhbt(i,J) = find_vhbt(vbt_trans(i,J), BTCL_v(i,J), US) + vhbt0(i,J)
         enddo ; enddo 
+        !!$acc end parallel
       else
         !GOMP do
         !$acc parallel loop
@@ -2003,16 +2110,18 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         !$acc end parallel
       endif
     else
-      ! On even steps, update u first.
-      !GOMP do
+      ! On even steps, update u first 
+      !GOMP do 
+      !$acc parallel loop
       do j=jsv-1,jev+1 ; do I=isv-1,iev
         Cor_u(I,j) = ((azon(I,j) * vbt(i+1,J) + czon(I,j) * vbt(i,J-1)) + &
                       (bzon(I,j) * vbt(i,J) +  dzon(I,j) * vbt(i+1,J-1))) - &
                      Cor_ref_u(I,j)
         PFu(I,j) = ((eta_PF_BT(i,j)-eta_PF(i,j))*gtot_E(i,j) - &
                      (eta_PF_BT(i+1,j)-eta_PF(i+1,j))*gtot_W(i+1,j)) * &
-                     dgeo_de * CS%IdxCu(I,j)
+                     dgeo_de * CS_IdxCu_gpu(I,j)
       enddo ; enddo
+      !$acc end parallel
 
       if (CS%dynamic_psurf) then
         !GOMP do
@@ -2049,17 +2158,19 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
 
       if (use_BT_cont) then
         !GOMP do
+        !!$acc parallel loop collapse(2)
         do j=jsv-1,jev+1 ; do I=isv-1,iev
           uhbt(I,j) = find_uhbt(ubt_trans(I,j), BTCL_u(I,j), US) + uhbt0(I,j)
         enddo ; enddo
+        !!$acc end parallel
         
       else
         !GOMP do
-        !$acc parallel
+        !!$acc parallel
         do j=jsv-1,jev+1 ; do I=isv-1,iev
           uhbt(I,j) = Datu(I,j)*ubt_trans(I,j) + uhbt0(I,j)
         enddo ; enddo
-        !$acc end parallel
+        !!$acc end parallel
       endif
       if (CS%BT_OBC%apply_u_OBCs) then  ! copy back the value for u-points on the boundary.
         !GOMP do
