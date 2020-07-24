@@ -642,16 +642,20 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   integer :: is, ie, js, je, nz, Isq, Ieq, Jsq, Jeq
   integer :: isd, ied, jsd, jed, IsdB, IedB, JsdB, JedB
   integer :: ioff, joff
-  
+ 
   !_________________Temporary Arrays for GPU porting_________________________ 
   !Temp variables for loop evaluation
   real :: CS_vel_underflow_gpu
-  logical:: CS_linear_wave_drag_gpu 
+  logical:: CS_linear_wave_drag_gpu, CS_dynamic_psurf_gpu 
+  integer :: CS_jsdw_gpu, CS_jedw_gpu, CS_isdw_gpu, CS_iedw_gpu
 
   !Naming: use structure_var_gpu for these temps ex: CS%q => CS_q_gpu  
-  real, allocatable, dimension (:,:,:):: CS_frhatu_gpu
+  !G variable structures
   real, allocatable, dimension (:,:)::& 
        G_mask2dCu_gpu,G_mask2dCv_gpu,G_mask2dT_gpu 
+  !CS variable Structures
+  real, allocatable, dimension (:,:,:)::&
+      CS_frhatu_gpu, CS_frhatv_gpu
   real, allocatable, dimension (:,:)::&
       CS_q_D_gpu,CS_D_u_Cor_gpu,CS_D_v_Cor_gpu,&
       CS_eta_cor_gpu,CS_IareaT_gpu,&
@@ -665,17 +669,24 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     !OBC_segment_v_direction, OBC_segment_u_direction
     ! OBC_segment access causes seg fault error and isn't
     ! being used in any of the code run by our test cases
-
   
   !Single variable workaround definitions 
   CS_vel_underflow_gpu = CS%vel_underflow
   CS_linear_wave_drag_gpu = CS%linear_wave_drag 
-  
+  CS_dynamic_psurf_gpu = CS%dynamic_psurf
+  CS_jsdw_gpu = CS%jsdw 
+  CS_jedw_gpu = CS%jedw 
+  CS_isdw_gpu = CS%isdw
+  CS_iedw_gpu = CS%iedw
+
   !allocate a temporary array (workaround for structures) 
-  allocate(CS_frhatu_gpu(size(CS%frhatu,1),size(CS%frhatu,2),size(CS%frhatu, 3)))
   allocate(G_mask2dCu_gpu(size(G%mask2dCu,1),size(G%mask2dCu,2)))
   allocate(G_mask2dCv_gpu(size(G%mask2dCv,1),size(G%mask2dCv,2)))
   allocate(G_mask2dT_gpu(size(G%mask2dT,1),size(G%mask2dT,2)))
+
+  allocate(CS_frhatu_gpu(size(CS%frhatu,1),size(CS%frhatu,2),size(CS%frhatu,3)))
+  allocate(CS_frhatv_gpu(size(CS%frhatv,1),size(CS%frhatv,2),size(CS%frhatv,3)))
+
   allocate(CS_q_D_gpu(size(CS%q_D,1),size(CS%q_D,2)))
   allocate(CS_D_u_Cor_gpu(size(CS%D_u_Cor,1),size(CS%D_u_Cor,2)))
   allocate(CS_D_v_Cor_gpu(size(CS%D_v_Cor,1),size(CS%D_v_Cor,2)))
@@ -692,16 +703,9 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   allocate(CS_uhbt_IC_gpu(size(CS%uhbt_IC,1), size(CS%uhbt_IC,2)))
   allocate(CS_vhbt_IC_gpu(size(CS%vhbt_IC,1), size(CS%vhbt_IC,2)))
 
-
-  !print *, "Shape of CS%q_D", shape(CS%q_D)
-  !print *, "Shape of CS_q_D_gpu", shape(CS_q_D_gpu) 
-  
   !Copy data to the temporary array
   !index using dimension size coordinants
-  do i=1,size(CS%frhatu, 1); do j=1,size(CS%frhatu,2) ; do k=1,size(CS%frhatu,3)
-    CS_frhatu_gpu(i,j,k) = CS%frhatu(i,j,k)  
-  enddo; enddo; enddo  
-
+  !G structures_______________
   do i=1, size(G%mask2dCu, 1); do j=1, size(G%mask2dCu, 2)
     G_mask2dCu_gpu(i,j) = G%mask2dCu(i,j) 
   enddo; enddo 
@@ -713,6 +717,15 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   do i=1, size(G%mask2dT, 1); do j=1, size(G%mask2dT, 2)
     G_mask2dT_gpu(i,j) = G%mask2dT(i,j)
   enddo; enddo
+
+  !CS Structures______________
+  do i=1,size(CS%frhatu, 1); do j=1,size(CS%frhatu,2) ; do k=1,size(CS%frhatu,3)
+    CS_frhatu_gpu(i,j,k) = CS%frhatu(i,j,k)
+  enddo; enddo; enddo
+
+  do i=1,size(CS%frhatv, 1); do j=1,size(CS%frhatv,2) ; do k=1,size(CS%frhatv,3)
+    CS_frhatv_gpu(i,j,k) = CS%frhatv(i,j,k)
+  enddo; enddo; enddo  
 
   do i=1, size(CS%q_D, 1); do j=1, size(CS%q_D, 2)
     CS_q_D_gpu(i,j) = CS%q_D(i,j)
@@ -930,6 +943,32 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
 
   if (id_clock_pass_pre > 0) call cpu_clock_end(id_clock_pass_pre)
 !--- end setup for group halo update
+print *, "je=", je, "jev=",jev, "jev+1=",( jev+1)
+print *, "    js=",js, "jsv=",jsv 
+print *, "ie=",ie, "iev=",iev 
+print *, "    is=",is,"is-1:", is-1, "isv=",isv 
+print *, "nz=",nz, "k=", k 
+print *, "n=",n  
+print *, "size of wt_u:", size(wt_u,1), size(wt_u,2), size(wt_u,3) 
+print *, "size of eta_in:", size(eta_in,1), size(eta_in,2)
+print *, "size of vbt_cor:", size(vbt_cor,1), size(vbt_cor,2)
+print *, "size of v_cor:", size(v_cor,1), size(v_cor,2), size(v_cor,3)
+
+!ACC Data transfer 
+!!$acc data copyin(cs_q_d_gpu(isvf-2:ievf+1,jsvf-2:jevf+1), &
+!!$acc     cs_d_u_cor_gpu(isvf-2:ievf+1,jsvf-1:jevf+1), &
+!!$acc     cs_d_v_cor_gpu(isvf-1:ievf+1,jsvf-2:jevf+1) , &
+!!$acc     d_eta_pf(is:ie,js:je), dyn_coef_eta(is-1:ie+1,js-1:je+1) , &
+!!$acc     eta_pf_1(is:ie,js:je), &
+!!$acc     eta_in(:,:) ,  eta_pf_start(:,:) , eta_pf_in(:,:) , &
+!!!$acc     wt_u(is-1:ie,js:je,:nz),wt_v(is:ie,js-1:je,:nz) , &
+!!!$acc     vbt_cor(is:ie,js-1:je),ubt_cor(is-1:ie,js-1:je+1) , &
+!!$acc     v_cor(is:ie,js-1:je,:nz), u_cor(is-1:ie,js:je,:nz) , &
+!!$acc     pbce(is-1:ie+1,js-1:je+1,k) )! , &
+!!!$acc     gtot_e(is-1:ie,js:je+1), gtot_w(is:ie+1,js:je+1) , &
+!!!$acc     gtot_n(is:ie,js-1:je), gtot_s(is:ie,js:je+1) )
+
+!print *, "Through Data CopyIn"
 
 !   Calculate the constant coefficients for the Coriolis force terms in the
 ! barotropic momentum equations.  This has to be done quite early to start
@@ -992,9 +1031,8 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
 
   ! Zero out various wide-halo arrays.
   !$OMP parallel do default(shared)
-  !Issue: Executes Seq !Issue: copy CS seq
-  !!$acc parallel loop
-  do j=CS%jsdw,CS%jedw ; do i=CS%isdw,CS%iedw
+  !$acc parallel loop
+  do j=CS_jsdw_gpu,CS_jedw_gpu ; do i=CS_isdw_gpu,CS_iedw_gpu
     gtot_E(i,j) = 0.0 ; gtot_W(i,j) = 0.0
     gtot_N(i,j) = 0.0 ; gtot_S(i,j) = 0.0
     eta(i,j) = 0.0
@@ -1003,41 +1041,39 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       eta_PF_1(i,j) = 0.0 ; d_eta_PF(i,j) = 0.0
     endif
     p_surf_dyn(i,j) = 0.0
-    if (CS%dynamic_psurf) dyn_coef_eta(i,j) = 0.0
+    if (CS_dynamic_psurf_gpu) dyn_coef_eta(i,j) = 0.0
   enddo ; enddo
-  !!$acc end parallel 
+  !$acc end parallel 
 
   !   The halo regions of various arrays need to be initialized to
   ! non-NaNs in case the neighboring domains are not part of the ocean.
   ! Otherwise a halo update later on fills in the correct values.
-  !Issue: copy CS seq
   !$OMP parallel do default(shared)
-  !!$acc parallel loop
-  do j=CS%jsdw,CS%jedw ; do I=CS%isdw-1,CS%iedw
+  !$acc parallel loop
+  do j=CS_jsdw_gpu,CS_jedw_gpu ; do I=CS_isdw_gpu-1,CS_iedw_gpu
     Cor_ref_u(I,j) = 0.0 ; BT_force_u(I,j) = 0.0 ; ubt(I,j) = 0.0
     Datu(I,j) = 0.0 ; bt_rem_u(I,j) = 0.0 ; uhbt0(I,j) = 0.0
   enddo ; enddo
-  !!$acc end parallel 
+  !$acc end parallel 
 
   !$OMP parallel do default(shared)
-  !!$acc parallel loop
-  do J=CS%jsdw-1,CS%jedw ; do i=CS%isdw,CS%iedw
+  !$acc parallel loop
+  do J=CS_jsdw_gpu-1,CS_jedw_gpu ; do i=CS_isdw_gpu,CS_iedw_gpu
     Cor_ref_v(i,J) = 0.0 ; BT_force_v(i,J) = 0.0 ; vbt(i,J) = 0.0
     Datv(i,J) = 0.0 ; bt_rem_v(i,J) = 0.0 ; vhbt0(I,j) = 0.0
   enddo ; enddo
-  !!$acc end parallel
+  !$acc end parallel
 
   ! Copy input arrays into their wide-halo counterparts.
   if (interp_eta_PF) then
     !$OMP parallel do default(shared) 
-    !Issue: Executes Seq
-    !!$acc parallel loop
+    !$acc parallel loop collapse(2)
     do j=G%jsd,G%jed ; do i=G%isd,G%ied ! Was "do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1" but doing so breaks OBC. Not sure why?
       eta(i,j) = eta_in(i,j)
       eta_PF_1(i,j) = eta_PF_start(i,j)
       d_eta_PF(i,j) = eta_PF_in(i,j) - eta_PF_start(i,j)
     enddo ; enddo
-    !!$acc end parallel
+    !$acc end parallel
   else
     !$OMP parallel do default(shared)
     !$acc parallel loop
@@ -1086,17 +1122,20 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   !$acc end parallel
 
   !Loop has dependency flag
-  !!$acc parallel loop collapse(2)
+  !$acc parallel loop collapse(3)
   do j=js,je ; do k=1,nz ; do I=is-1,ie
     ubt_Cor(I,j) = ubt_Cor(I,j) + wt_u(I,j,k) * U_Cor(I,j,k)
   enddo ; enddo ; enddo
-  !!$acc end parallel 
+  !$acc end parallel 
   !$OMP parallel do default(shared)
-  !!$acc parallel loop collapse(2)
+  !$acc parallel loop collapse(3)
   do J=js-1,je ; do k=1,nz ; do i=is,ie
     vbt_Cor(i,J) = vbt_Cor(i,J) + wt_v(i,J,k) * V_Cor(i,J,k)
   enddo ; enddo ; enddo
-  !!$acc end parallel
+  !$acc end parallel
+
+!!$acc end data 
+!print *, "End of Data region"
   
   ! The gtot arrays are the effective layer-weighted reduced gravities for
   ! accelerations across the various faces, with names for the relative
@@ -1104,26 +1143,27 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   ! updated later on.
   !$OMP parallel do default(shared)
  
-  !Loop causes job to run without completing
-  !!$acc parallel loop collapse(2)
-  do j=js,je
-    do k=1,nz ; do I=is-1,ie
+  do k=1,nz
+  !$acc parallel loop collapse(2)
+  do j=js,je ; do I=is-1,ie
       gtot_E(i,j)   = gtot_E(i,j)   + pbce(i,j,k)   * wt_u(I,j,k)
       gtot_W(i+1,j) = gtot_W(i+1,j) + pbce(i+1,j,k) * wt_u(I,j,k)
     enddo ; enddo
+  !$acc end parallel 
   enddo
-  !!$acc end parallel 
 
-  !$OMP parallel do default(shared)
-  !!$acc parallel loop collapse(2)  
-  do J=js-1,je
-    do k=1,nz ; do i=is,ie
+  !$OMP parallel do default(shared)  
+  do k=1,nz
+  !$acc parallel loop collapse(2)
+  do J=js-1,je ; do i=is,ie
       gtot_N(i,j)   = gtot_N(i,j)   + pbce(i,j,k)   * wt_v(i,J,k)
       gtot_S(i,j+1) = gtot_S(i,j+1) + pbce(i,j+1,k) * wt_v(i,J,k)
     enddo ; enddo
-  enddo
-  !!$acc end parallel
+  !$acc end parallel
+  enddo 
 
+!!$acc end data
+print *, "End of Data region"
 
   if (CS%tides) then
     call tidal_forcing_sensitivity(G, CS%tides_CSp, det_de)
@@ -1176,20 +1216,24 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
 ! barotropic calculation.
 
   !$OMP parallel do default(shared)
+  !$acc parallel loop
   do j=js,je ; do I=is-1,ie
     ! ### IDatu here should be replaced with 1/D+eta(Bous) or 1/eta(non-Bous).
     ! ### although with BT_cont_types IDatu should be replaced by
     ! ###   CS%dy_Cu(I,j) / (d(uhbt)/du) (with appropriate bounds).
-    BT_force_u(I,j) = forces%taux(I,j) * mass_accel_to_Z * CS%IDatu(I,j)*visc_rem_u(I,j,1)
+    BT_force_u(I,j) = forces%taux(I,j) * mass_accel_to_Z * CS_IDatu_gpu(I,j)*visc_rem_u(I,j,1)
   enddo ; enddo
+  !$acc end parallel
 
   !$OMP parallel do default(shared)
+  !$acc parallel loop
   do J=js-1,je ; do i=is,ie
     ! ### IDatv here should be replaced with 1/D+eta(Bous) or 1/eta(non-Bous).
     ! ### although with BT_cont_types IDatv should be replaced by
     ! ###   CS%dx_Cv(I,j) / (d(vhbt)/dv) (with appropriate bounds).
-    BT_force_v(i,J) = forces%tauy(i,J) * mass_accel_to_Z * CS%IDatv(i,J)*visc_rem_v(i,J,1)
+    BT_force_v(i,J) = forces%tauy(i,J) * mass_accel_to_Z * CS_IDatv_gpu(i,J)*visc_rem_v(i,J,1)
   enddo ; enddo
+  !$acc end parallel
   if (present(taux_bot) .and. present(tauy_bot)) then
     if (associated(taux_bot) .and. associated(tauy_bot)) then
       !$OMP parallel do default(shared) 
@@ -1210,22 +1254,24 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   ! bc_accel_u & bc_accel_v are only available on the potentially
   ! non-symmetric computational domain.
 
-  !print *, "Loop 1556  j = ", je-js, "i=", ie-is-1, "k= ", nz-1
-  !Loop with dependency flag; results in memory leak!
   !$OMP parallel do default(shared)
-  !!$acc parallel loop collapse(3)  
-  do j=js,je ; do k=1,nz ; do I=Isq,Ieq
-    BT_force_u(I,j) = BT_force_u(I,j) + wt_u(I,j,k) * bc_accel_u(I,j,k)
-  enddo ; enddo ; enddo
-  !!$acc end parallel 
+  do k=1,nz 
+  !$acc parallel loop collapse(2)
+  do j=js,je; do I=Isq,Ieq
+   BT_force_u(I,j) = BT_force_u(I,j) + wt_u(I,j,k) * bc_accel_u(I,j,k)
+  enddo ; enddo 
+  !$acc end parallel 
+  enddo 
 
-  !Loop with dependency flag; results in memory leak!
+  !Loop with dependency flag
   !$OMP parallel do default(shared)
-  !!$acc parallel loop collapse(3)
-  do J=Jsq,Jeq ; do k=1,nz ; do i=is,ie
+  do k=1,nz
+  !$acc parallel loop collapse(2)
+  do J=Jsq,Jeq ; do i=is,ie
     BT_force_v(i,J) = BT_force_v(i,J) + wt_v(i,J,k) * bc_accel_v(i,J,k)
-  enddo ; enddo ; enddo
-  !!$acc end parallel
+  enddo ; enddo
+  !$acc end parallel
+  enddo 
 
   ! Determine the difference between the sum of the layer fluxes and the
   ! barotropic fluxes found from the same input velocities.
@@ -1241,39 +1287,44 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     !$acc end parallel
 
     if (CS%visc_rem_u_uh0) then
-      !Loop with dependency flag
+      !Loops not hit under current configuration
       !$OMP parallel do default(shared)
-      !!$acc parallel loop
-      do j=js,je ; do k=1,nz ; do I=is-1,ie
+      do k=1,nz
+      !$acc parallel loop collapse(2)
+      do j=js,je ; do I=is-1,ie
         uhbt(I,j) = uhbt(I,j) + uh0(I,j,k)
         ubt(I,j) = ubt(I,j) + wt_u(I,j,k) * u_uh0(I,j,k)
-      enddo ; enddo ; enddo
+      enddo ; enddo 
+      !$acc end parallel 
+      enddo
 
       !$OMP parallel do default(shared)
-      !!$acc loop
-      do J=js-1,je ; do k=1,nz ; do i=is,ie
+      do k=1,nz
+      !$acc parallel loop collapse(2)
+      do J=js-1,je ; do i=is,ie
         vhbt(i,J) = vhbt(i,J) + vh0(i,J,k)
         vbt(i,J) = vbt(i,J) + wt_v(i,J,k) * v_vh0(i,J,k)
-      enddo ; enddo ; enddo
-      !!$acc end parallel
+      enddo ; enddo
+      !$acc end parallel
+      enddo
+
     else
       !$OMP parallel do default(shared)
-      !Loop with dependency flag, executes sequentially. Uses CS temp array
-      !$acc parallel loop
-      do j=js,je ; do k=1,nz ; do I=is-1,ie
+      !$acc parallel loop collapse(3) 
+      do j=js,je ;do k=1,nz ; do I=is-1,ie
         uhbt(I,j) = uhbt(I,j) + uh0(I,j,k)
-        !ubt(I,j) = ubt(I,j) + CS%frhatu(I,j,k) * u_uh0(I,j,k)
         ubt(I,j) = ubt(I,j) + CS_frhatu_gpu(I,j,k) * u_uh0(I,j,k)
-      enddo ; enddo ; enddo
+      enddo ; enddo; enddo
       !$acc end parallel  
 
       !$OMP parallel do default(shared)
-
+      !$acc parallel loop collapse(3)
       do J=js-1,je ; do k=1,nz ; do i=is,ie
         vhbt(i,J) = vhbt(i,J) + vh0(i,J,k)
-        vbt(i,J) = vbt(i,J) + CS%frhatv(i,J,k) * v_vh0(i,J,k)
+        vbt(i,J) = vbt(i,J) + CS_frhatv_gpu(i,J,k) * v_vh0(i,J,k)
       enddo ; enddo ; enddo
-      
+      !$acc end parallel 
+
     endif
     if (use_BT_cont) then
       if (CS%adjust_BT_cont) then
@@ -1356,23 +1407,25 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   enddo ; enddo
   !$acc end parallel 
  
-  !Loop with dependency flag
   !$OMP parallel do default(shared)
-  !!$acc parallel loop
-  do j=js,je ; do k=1,nz ; do I=is-1,ie
+  do k=1,nz
+  !$acc parallel loop collapse(2)
+  do j=js,je ; do I=is-1,ie
     ubt(I,j) = ubt(I,j) + wt_u(I,j,k) * U_in(I,j,k)
-  enddo ; enddo ; enddo 
-  !!$acc end parallel 
+  enddo ; enddo 
+  !$acc end parallel 
+  enddo 
 
-  !Loop with dependency flag 
   !$OMP parallel do default(shared)
-  !!$acc loop
-  do J=js-1,je ; do k=1,nz ; do i=is,ie
+  do k=1,nz
+  !$acc parallel loop collapse(2)
+  do J=js-1,je ; do i=is,ie
     vbt(i,J) = vbt(i,J) + wt_v(i,J,k) * V_in(i,J,k)
-  enddo ; enddo ;  enddo
- 
+  enddo ;  enddo
+  !$acc end parallel 
+  enddo 
+
   !$OMP parallel do default(shared)
-  !Issue: copy CS seq
   !$acc parallel loop
   do j=js,je ; do I=is-1,ie
     if (abs(ubt(I,j)) < CS_vel_underflow_gpu) ubt(I,j) = 0.0
@@ -1380,7 +1433,6 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   !$acc end parallel
    
   !$OMP parallel do default(shared)
-  !Issue: copy CS seq
   !$acc parallel loop
   do J=js-1,je ; do i=is,ie
     if (abs(vbt(i,J)) < CS_vel_underflow_gpu) vbt(i,J) = 0.0
@@ -1392,18 +1444,24 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   endif
 
   if (CS%gradual_BT_ICs) then
+    !Loop not reached under benchmark case
     !$OMP parallel do default(shared)
+    !$acc parallel loop
     do j=js,je ; do I=is-1,ie
-      BT_force_u(I,j) = BT_force_u(I,j) + (ubt(I,j) - CS%ubt_IC(I,j)) * Idt
-      ubt(I,j) = CS%ubt_IC(I,j)
-      if (abs(ubt(I,j)) < CS%vel_underflow) ubt(I,j) = 0.0
+      BT_force_u(I,j) = BT_force_u(I,j) + (ubt(I,j) - CS_ubt_IC_gpu(I,j)) * Idt
+      ubt(I,j) = CS_ubt_IC_gpu(I,j)
+      if (abs(ubt(I,j)) < CS_vel_underflow_gpu) ubt(I,j) = 0.0
     enddo ; enddo
+    !$acc end parallel 
+
     !$OMP parallel do default(shared)
+    !$acc parallel loop
     do J=js-1,je ; do i=is,ie
-      BT_force_v(i,J) = BT_force_v(i,J) + (vbt(i,J) - CS%vbt_IC(i,J)) * Idt
-      vbt(i,J) = CS%vbt_IC(i,J)
-      if (abs(vbt(i,J)) < CS%vel_underflow) vbt(i,J) = 0.0
+      BT_force_v(i,J) = BT_force_v(i,J) + (vbt(i,J) - CS_vbt_IC_gpu(i,J)) * Idt
+      vbt(i,J) = CS_vbt_IC_gpu(i,J)
+      if (abs(vbt(i,J)) < CS_vel_underflow_gpu) vbt(i,J) = 0.0
     enddo ; enddo
+    !$acc end parallel 
   endif
 
   if ((Isq > is-1) .or. (Jsq > js-1)) then
@@ -1569,25 +1627,28 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
 
   !$OMP do
   !Loop has dependency flag, adds gpu seq execution time
-  !!$acc parallel loop 
-  do j=js,je ; do k=1,nz ; do I=is-1,ie
+  do k=1,nz
+  !$acc parallel loop collapse(2) 
+  do j=js,je ; do I=is-1,ie
     av_rem_u(I,j) = av_rem_u(I,j) + CS_frhatu_gpu(I,j,k) * visc_rem_u(I,j,k)
-  enddo ; enddo ; enddo
-  !!$acc end parallel 
- 
+  enddo ; enddo
+  !$acc end parallel 
+  enddo 
+
   !$OMP do
-  do J=js-1,je ; do k=1,nz ; do i=is,ie
-    av_rem_v(i,J) = av_rem_v(i,J) + CS%frhatv(i,J,k) * visc_rem_v(i,J,k)
-  enddo ; enddo ; enddo
+  do k=1,nz 
+  !$acc parallel loop collapse(2)
+  do J=js-1,je ; do i=is,ie
+    av_rem_v(i,J) = av_rem_v(i,J) + CS_frhatv_gpu(i,J,k) * visc_rem_v(i,J,k)
+  enddo ; enddo 
+  !$acc end parallel 
+  enddo
  
   if (CS%strong_drag) then
     !$OMP do
-    !Loop utilizes G temp array
     !$acc parallel
     !$acc loop
     do j=js,je ; do I=is-1,ie
-      !bt_rem_u(I,j) = G%mask2dCu(I,j) * &
-         !((nstep * av_rem_u(I,j)) / (1.0 + (nstep-1)*av_rem_u(I,j)))
        bt_rem_u(I,j) = G_mask2dCu_gpu(I,j) * &
          ((nstep * av_rem_u(I,j)) / (1.0 + (nstep-1)*av_rem_u(I,j)))
     enddo ; enddo
@@ -2037,19 +2098,23 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     if (MOD(n+G%first_direction,2)==1) then
       ! On odd-steps, update v first
       !GOMP do
+      !$acc parallel loop collapse(2)
       do J=jsv-1,jev ; do i=isv-1,iev+1
         Cor_v(i,J) = -1.0*((amer(I-1,j) * ubt(I-1,j) + cmer(I,j+1) * ubt(I,j+1)) + &
                (bmer(I,j) * ubt(I,j) + dmer(I-1,j+1) * ubt(I-1,j+1))) - Cor_ref_v(i,J)
         PFv(i,J) = ((eta_PF_BT(i,j)-eta_PF(i,j))*gtot_N(i,j) - &
                      (eta_PF_BT(i,j+1)-eta_PF(i,j+1))*gtot_S(i,j+1)) * &
-                   dgeo_de * CS%IdyCv(i,J)
+                   dgeo_de * CS_IdyCv_gpu(i,J)
       enddo ; enddo
+      !$acc end parallel 
  
       if (CS%dynamic_psurf) then
         !GOMP do
+        !$acc parallel loop collapse(2)
         do J=jsv-1,jev ; do i=isv-1,iev+1
-          PFv(i,J) = PFv(i,J) + (p_surf_dyn(i,j) - p_surf_dyn(i,j+1)) * CS%IdyCv(i,J)
+          PFv(i,J) = PFv(i,J) + (p_surf_dyn(i,j) - p_surf_dyn(i,j+1)) * CS_IdyCv_gpu(i,J)
         enddo ; enddo
+        !$acc end parallel 
       endif
 
       if (CS%BT_OBC%apply_v_OBCs) then  ! zero out PF across boundary
@@ -2060,24 +2125,31 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         endif ; enddo ; enddo
         !$acc end parallel
       endif
-      !GOMP do
-      !Issue: large time hit; need to implement data management
-      !!$acc parallel loop collapse(2)
+      
+      !$acc parallel loop
       do J=jsv-1,jev ; do i=isv-1,iev+1
         vel_prev = vbt(i,J)
         vbt(i,J) = bt_rem_v(i,J) * (vbt(i,J) + &
                     dtbt * ((BT_force_v(i,J) + Cor_v(i,J)) + PFv(i,J)))
         vbt_trans(i,J) = trans_wt1*vbt(i,J) + trans_wt2*vel_prev
+      enddo ; enddo 
+      !$acc end parallel 
 
-        if (CS_linear_wave_drag_gpu) then
+      if (CS_linear_wave_drag_gpu) then
+        !$acc parallel loop
+        do J=jsv-1,jev ; do i=isv-1,iev+1
           v_accel_bt(I,j) = v_accel_bt(I,j) + wt_accel(n) * &
               ((Cor_v(i,J) + PFv(i,J)) - vbt(i,J)*Rayleigh_v(i,J))
-        else
+        enddo ; enddo 
+        !$acc end parallel
+      else
+        !$acc parallel loop
+        do J=jsv-1,jev ; do i=isv-1,iev+1
           v_accel_bt(I,j) = v_accel_bt(I,j) + wt_accel(n) * (Cor_v(i,J) + PFv(i,J))
-        endif
-      enddo ; enddo
-      !!$acc end parallel
-
+        enddo; enddo
+        !$acc end parallel
+      endif
+ 
       if (use_BT_cont) then
         !GOMP do
         !!$acc parallel loop collapse(2)
@@ -2132,8 +2204,6 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         endif ; enddo ; enddo
         !!$acc end parallel
       endif
-      !print *, "Loop 1986"
-      !Openacc: Dependence in if/else statements causing divergence
       !GOMP do
       !$acc parallel loop collapse(2)
       do j=jsv,jev ; do I=isv-1,iev
@@ -2759,8 +2829,11 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         Corv_bt_sum(i,J) = Corv_bt_sum(i,J) * I_sum_wt_accel
       enddo ; enddo
       !!$acc end parallel
+   !End of bt_step openacc directives
+      
       call post_data(CS%id_Corv_bt, Corv_bt_sum(isd:ied,JsdB:JedB), CS%diag)
     endif
+
     if (CS%id_ubtforce > 0) call post_data(CS%id_ubtforce, BT_force_u(IsdB:IedB,jsd:jed), CS%diag)
     if (CS%id_vbtforce > 0) call post_data(CS%id_vbtforce, BT_force_v(isd:ied,JsdB:JedB), CS%diag)
     if (CS%id_uaccel > 0) call post_data(CS%id_uaccel, u_accel_bt(IsdB:IedB,jsd:jed), CS%diag)
@@ -2812,7 +2885,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     if (find_etaav) call complete_group_pass(CS%pass_etaav, G%Domain)
     call complete_group_pass(CS%pass_ubta_uhbta, G%Domain)
   endif
-
+!!$acc end data
 end subroutine btstep
 
 !> This subroutine automatically determines an optimal value for dtbt based
